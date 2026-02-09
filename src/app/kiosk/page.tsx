@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { MOCK_STUDENTS } from "@/src/data/mock";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { Student } from "@/src/types";
+import { supabase } from "@/src/lib/supabase";
 
 // Meal time ranges
 const MEAL_SCHEDULE = {
@@ -43,6 +43,13 @@ export default function KioskPage() {
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [activeMeal, setActiveMeal] = useState<MealType | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [todayLogs, setTodayLogs] = useState<Record<string, string[]>>({});
+
+  // Extra servicies states
+  const [hasExtra, setHasExtra] = useState(false);
+  const [extraNotes, setExtraNotes] = useState("");
 
   // Update time and determine active meal
   useEffect(() => {
@@ -75,28 +82,125 @@ export default function KioskPage() {
     return () => clearInterval(timer);
   }, []);
 
-  const filteredStudents = MOCK_STUDENTS.filter((s) => {
-    const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
-    return (
-      s.active &&
-      (fullName.includes(searchTerm.toLowerCase()) ||
-        s.code.includes(searchTerm))
-    );
-  });
+  const fetchStudents = useCallback(async () => {
+    setLoading(true);
+    let query = supabase
+      .from("students")
+      .select("*")
+      .eq("active", true)
+      .order("first_name", { ascending: true })
+      .limit(10);
 
-  const handleRegisterMeal = () => {
+    if (searchTerm && searchTerm.trim()) {
+      query = query.or(
+        `first_name.ilike.%${searchTerm}%,last_name.ilike.%${searchTerm}%,code.ilike.%${searchTerm}%`,
+      );
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Error fetching students:", error);
+    } else {
+      const mappedStudents: Student[] = (data || []).map((s: any) => ({
+        id: s.id,
+        firstName: s.first_name,
+        lastName: s.last_name,
+        code: s.code,
+        dni: s.dni,
+        email: s.email,
+        phone: s.phone,
+        address: s.address,
+        birthDate: s.birth_date,
+        joinedDate: s.joined_date,
+        notes: s.notes,
+        active: s.active,
+        avatar: s.avatar_url,
+      }));
+      setStudents(mappedStudents);
+
+      // Fetch today's logs for these students
+      const studentIds = mappedStudents.map((s) => s.id);
+      if (studentIds.length > 0) {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const { data: logsData } = await supabase
+          .from("meal_logs")
+          .select("student_id, meal_type")
+          .in("student_id", studentIds)
+          .gte("timestamp", startOfDay.toISOString());
+
+        const logMap: Record<string, string[]> = {};
+        logsData?.forEach((log) => {
+          if (!logMap[log.student_id]) logMap[log.student_id] = [];
+          logMap[log.student_id].push(log.meal_type);
+        });
+        setTodayLogs(logMap);
+      }
+    }
+    setLoading(false);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      fetchStudents();
+    }, 300);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [fetchStudents]);
+
+  const handleRegisterMeal = async () => {
     if (!selectedStudent || !activeMeal) return;
 
-    const studentName = `${selectedStudent.firstName} ${selectedStudent.lastName}`;
+    // Prevention: Check if already registered
     const mealLabel = MEAL_SCHEDULE[activeMeal].label;
+    if (todayLogs[selectedStudent.id]?.includes(mealLabel)) {
+      alert("Este servicio ya fue registrado hoy para este estudiante.");
+      return;
+    }
+
+    setLoading(true);
+
+    const { error } = await supabase.from("meal_logs").insert([
+      {
+        student_id: selectedStudent.id,
+        meal_type: mealLabel,
+        status: "Verificado",
+        timestamp: new Date().toISOString(),
+        has_extra: hasExtra,
+        extra_notes: hasExtra ? extraNotes : null,
+      },
+    ]);
+
+    if (error) {
+      console.error("Error registering meal:", error);
+      alert("Error al registrar: " + error.message);
+      setLoading(false);
+      return;
+    }
+
+    const studentName = `${selectedStudent.firstName} ${selectedStudent.lastName}`;
 
     setLastAction({
       student: studentName,
       meal: mealLabel,
     });
     setCountdown(3);
+
+    // Update local todayLogs state
+    setTodayLogs((prev) => ({
+      ...prev,
+      [selectedStudent.id]: [...(prev[selectedStudent.id] || []), mealLabel],
+    }));
+
     setSelectedStudent(null);
     setSearchTerm("");
+    // fetchStudents will be triggered by searchTerm change or we can call it directly
+    fetchStudents();
+    setHasExtra(false);
+    setExtraNotes("");
+    setLoading(false);
 
     // Countdown logic
     const interval = setInterval(() => {
@@ -114,19 +218,19 @@ export default function KioskPage() {
   if (!mounted) return null;
 
   return (
-    <div className="min-h-screen bg-[#F8FAFB] text-slate-800 font-sans flex flex-col relative overflow-hidden">
+    <div className="min-h-screen bg-[#F0F2F5] text-slate-800 font-sans flex flex-col relative overflow-hidden">
       {/* Background layer with blur if success */}
       <div
         className={`flex flex-col flex-1 transition-all duration-500 ${lastAction ? "blur-md opacity-20 scale-[0.98] pointer-events-none" : ""}`}
       >
         {/* SaaS Header */}
-        <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-3 lg:px-20">
+        <header className="sticky top-0 z-40 bg-[#2A3F54] backdrop-blur-md border-b border-white/10 px-6 py-4 lg:px-20 shadow-xl">
           <div className="max-w-[1200px] mx-auto flex items-center justify-between">
             {/* Left Side: Brand and Breadcrumb */}
             <div className="flex items-center gap-6">
               <Link
-                href="/"
-                className="flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-[#1abc9c] transition-colors font-bold text-sm tracking-wider"
+                href="/dashboard"
+                className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white transition-colors font-bold text-sm tracking-wider"
               >
                 <ArrowLeftIcon />
                 <span className="uppercase tracking-widest whitespace-nowrap">
@@ -134,15 +238,15 @@ export default function KioskPage() {
                 </span>
               </Link>
 
-              <div className="h-8 w-px bg-slate-200 hidden sm:block"></div>
+              <div className="h-8 w-px bg-white/10 hidden sm:block"></div>
 
               <div className="flex items-center gap-3">
-                <div className="bg-[#1abc9c] p-1.5 rounded-lg shadow-sm shadow-[#1abc9c]/50 text-white shrink-0">
+                <div className="bg-[#1ABB9C] p-1.5 rounded-lg shadow-sm shadow-[#1ABB9C]/50 text-white shrink-0">
                   <LogoIconPrimary />
                 </div>
                 <div className="hidden xs:block">
-                  <h1 className="text-lg font-extrabold tracking-tight text-slate-900 uppercase leading-none">
-                    PENSION<span className="text-[#1abc9c]">ADMIN</span>
+                  <h1 className="text-lg font-extrabold tracking-tight text-white uppercase leading-none">
+                    PENSION<span className="text-[#1ABB9C]">ADMIN</span>
                   </h1>
                   <p className="text-[10px] font-semibold text-slate-400 mt-1 tracking-widest uppercase">
                     Kiosk Pro v3.0
@@ -153,13 +257,13 @@ export default function KioskPage() {
 
             {/* Right Side Info */}
             <div className="flex items-center gap-8">
-              <div className="hidden md:flex flex-col items-end mr-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              <div className="hidden md:flex flex-col items-end mr-2 text-right">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                   Estado del Sistema
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                  <span className="text-sm font-semibold text-[#1abc9c]">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+                  <span className="text-xs font-black text-[#1ABB9C] uppercase tracking-widest">
                     Operativo
                   </span>
                 </div>
@@ -180,83 +284,116 @@ export default function KioskPage() {
             /* List Interface */
             <div className="w-full flex flex-col h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
               <div className="w-full max-w-2xl mx-auto mb-12">
-                <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none text-[#1abc9c]/60 group-focus-within:text-[#1abc9c]">
+                <div className="relative group transition-all duration-500">
+                  <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none text-[#1ABB9C] group-focus-within:scale-110 transition-transform">
                     <SearchIconLarge />
                   </div>
                   <input
-                    className="block w-full pl-16 pr-6 py-6 bg-white border-0 rounded-2xl shadow-xl shadow-[#1abc9c]/5 ring-1 ring-[#1abc9c]/10 focus:ring-4 focus:ring-[#1abc9c]/20 transition-all text-xl font-medium placeholder:text-slate-400"
-                    placeholder="Busca por nombre o escanea ID..."
+                    className="block w-full pl-16 pr-6 py-6 bg-white border border-slate-200 rounded-[2rem] shadow-[0_20px_50px_rgba(42,63,84,0.1)] focus:ring-4 focus:ring-[#1ABB9C]/10 focus:border-[#1ABB9C] transition-all text-xl font-bold placeholder:text-slate-300 text-slate-700"
+                    placeholder="Escribe el nombre o escanea el código..."
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     autoFocus
                   />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100 hidden sm:block">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Listo para escanear
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-[0_10px_40px_rgba(42,63,84,0.05)]">
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse">
                     <thead>
-                      <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-widest border-b border-slate-200">
-                        <th className="px-8 py-5 text-left font-semibold">
-                          Estudiante
+                      <tr className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] border-b border-slate-100">
+                        <th className="px-10 py-6 text-left">Pensionista</th>
+                        <th className="px-10 py-6 text-left">
+                          Código de Matrícula
                         </th>
-                        <th className="px-8 py-5 text-left font-semibold">
-                          Matrícula
+                        <th className="px-10 py-6 text-left">
+                          Plan de Servicio
                         </th>
-                        <th className="px-8 py-5 text-left font-semibold">
-                          Plan
-                        </th>
-                        <th className="px-8 py-5 text-right font-semibold">
-                          Estado
-                        </th>
+                        <th className="px-10 py-6 text-right">Estado Hoy</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredStudents.length > 0 ? (
-                        filteredStudents.map((student) => (
+                    <tbody className="divide-y divide-slate-50">
+                      {loading ? (
+                        <tr>
+                          <td colSpan={4} className="px-8 py-24 text-center">
+                            <div className="flex flex-col items-center gap-4">
+                              <div className="w-12 h-12 border-4 border-[#1ABB9C]/10 border-t-[#1ABB9C] rounded-full animate-spin"></div>
+                              <p className="text-slate-400 font-bold uppercase tracking-[0.3em] text-[10px]">
+                                Consultando Base de Datos...
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : students.length > 0 ? (
+                        students.map((student) => (
                           <tr
                             key={student.id}
                             onClick={() => setSelectedStudent(student)}
-                            className={`cursor-pointer transition-all hover:bg-slate-50`}
+                            className="group cursor-pointer transition-all hover:bg-[#1ABB9C]/[0.02] relative"
                           >
-                            <td className="px-8 py-5">
-                              <div className="flex items-center gap-4">
-                                <div className="h-12 w-12 rounded-xl bg-[#1abc9c]/10 flex items-center justify-center text-[#1abc9c] font-bold text-lg border border-[#1abc9c]/20">
+                            <td className="px-10 py-6">
+                              <div className="flex items-center gap-5">
+                                <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-white to-slate-50 flex items-center justify-center text-[#2A3F54] font-black text-xl border border-slate-200 shadow-sm transition-transform group-hover:scale-105 group-hover:border-[#1ABB9C]/30">
                                   {student.firstName[0]}
                                   {student.lastName[0]}
                                 </div>
                                 <div>
-                                  <div className="font-bold text-slate-900 text-base">
+                                  <div className="font-extrabold text-[#2A3F54] text-lg tracking-tight group-hover:text-[#1ABB9C] transition-colors">
                                     {student.firstName} {student.lastName}
                                   </div>
-                                  <div className="text-xs text-slate-500 font-medium tracking-tight">
-                                    Activo ahora
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                      Activo
+                                    </span>
                                   </div>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-8 py-5 font-mono text-sm font-semibold text-[#1abc9c]">
-                              {student.code}
+                            <td className="px-10 py-6">
+                              <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-lg border border-slate-100 text-slate-500 font-mono text-xs font-black tracking-widest">
+                                {student.code}
+                              </div>
                             </td>
-                            <td className="px-8 py-5">
-                              <span className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-bold uppercase">
-                                Pensionista G-1
+                            <td className="px-10 py-6">
+                              <span className="px-4 py-2 rounded-xl bg-[#2A3F54]/5 text-[#2A3F54] text-[10px] font-black uppercase tracking-widest border border-[#2A3F54]/10">
+                                PENSIONISTA G-1
                               </span>
                             </td>
-                            <td className="px-8 py-5 text-right text-slate-300">
-                              <CheckIconCircle size={24} />
+                            <td className="px-10 py-6 text-right">
+                              {todayLogs[student.id]?.includes(
+                                MEAL_SCHEDULE[activeMeal || "desayuno"].label,
+                              ) ? (
+                                <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-[#1ABB9C] rounded-full border border-emerald-100 font-black text-[10px] uppercase tracking-widest animate-in zoom-in-95">
+                                  <CheckIconCircle size={14} />
+                                  Listo
+                                </div>
+                              ) : (
+                                <div className="text-slate-200 flex items-center justify-end group-hover:text-[#1ABB9C]/20 transition-colors">
+                                  <CheckIconCircle size={24} />
+                                </div>
+                              )}
                             </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={4} className="px-8 py-20 text-center">
-                            <p className="text-slate-300 font-bold uppercase tracking-[0.3em] text-xs">
-                              Sin resultados
-                            </p>
+                          <td colSpan={4} className="px-8 py-32 text-center">
+                            <div className="flex flex-col items-center gap-4 opacity-30">
+                              <LogoIconPrimary />
+                              <p className="text-slate-500 font-black uppercase tracking-[0.4em] text-xs">
+                                {searchTerm
+                                  ? "Sin resultados"
+                                  : "Esperando Escaneo"}
+                              </p>
+                            </div>
                           </td>
                         </tr>
                       )}
@@ -272,7 +409,7 @@ export default function KioskPage() {
               <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
                 <div className="flex items-center gap-4">
                   <div className="relative">
-                    <div className="w-16 h-16 rounded-2xl bg-[#1abc9c] flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-[#1abc9c]/20 overflow-hidden">
+                    <div className="w-16 h-16 rounded-2xl bg-[#1ABB9C] flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-[#1ABB9C]/20 overflow-hidden">
                       {selectedStudent.firstName[0]}
                       {selectedStudent.lastName[0]}
                     </div>
@@ -321,6 +458,9 @@ export default function KioskPage() {
                     currentTime.getHours() >= MEAL_SCHEDULE.desayuno.end
                   }
                   onMark={handleRegisterMeal}
+                  isRegistered={todayLogs[selectedStudent.id]?.includes(
+                    MEAL_SCHEDULE.desayuno.label,
+                  )}
                 />
                 <MealCard
                   type="almuerzo"
@@ -330,6 +470,9 @@ export default function KioskPage() {
                     currentTime.getHours() >= MEAL_SCHEDULE.almuerzo.end
                   }
                   onMark={handleRegisterMeal}
+                  isRegistered={todayLogs[selectedStudent.id]?.includes(
+                    MEAL_SCHEDULE.almuerzo.label,
+                  )}
                 />
                 <MealCard
                   type="cena"
@@ -339,22 +482,10 @@ export default function KioskPage() {
                     currentTime.getHours() >= MEAL_SCHEDULE.cena.end
                   }
                   onMark={handleRegisterMeal}
+                  isRegistered={todayLogs[selectedStudent.id]?.includes(
+                    MEAL_SCHEDULE.cena.label,
+                  )}
                 />
-              </div>
-
-              {/* Attendance Actions Footer */}
-              <div className="mt-6 bg-white border border-slate-100 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Acciones de Registro
-                </p>
-                <div className="flex gap-2">
-                  <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50 font-bold text-[9px] transition-all uppercase tracking-widest">
-                    Log
-                  </button>
-                  <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-[#1abc9c] hover:border-[#1abc9c] hover:bg-[#1abc9c]/5 font-bold text-[9px] transition-all uppercase tracking-widest flex items-center gap-1.5">
-                    <PrintIcon /> Voucher
-                  </button>
-                </div>
               </div>
             </div>
           )}
@@ -376,6 +507,46 @@ export default function KioskPage() {
                 </p>
               </div>
             </div>
+
+            {/* Extras Toggle and Notes (Only for Lunch) */}
+            {activeMeal === "almuerzo" && (
+              <div className="flex-1 max-w-2xl mx-8 flex items-center gap-6 animate-in fade-in slide-in-from-left-4 duration-500">
+                <div className="flex items-center gap-3 bg-slate-50 border border-slate-100 px-4 py-2 rounded-2xl shrink-0">
+                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                    ¿Ración Extra?
+                  </span>
+                  <button
+                    onClick={() => {
+                      setHasExtra(!hasExtra);
+                      if (!hasExtra) setExtraNotes(""); // Reset on enable
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${hasExtra ? "bg-[#1ABB9C]" : "bg-slate-200"}`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${hasExtra ? "translate-x-6" : "translate-x-1"}`}
+                    />
+                  </button>
+                </div>
+
+                {hasExtra && (
+                  <div className="flex-1 flex gap-2 animate-in zoom-in-95 duration-300">
+                    {["Doble plato", "Presa", "Doble entrada"].map((option) => (
+                      <button
+                        key={option}
+                        onClick={() => setExtraNotes(option)}
+                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border shadow-sm ${
+                          extraNotes === option
+                            ? "bg-[#1ABB9C] text-white border-transparent"
+                            : "bg-white text-slate-400 border-slate-200 hover:border-[#1ABB9C]/30 hover:text-[#1ABB9C]"
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-4">
               <button
                 onClick={() => setSelectedStudent(null)}
@@ -385,11 +556,37 @@ export default function KioskPage() {
               </button>
               <button
                 onClick={handleRegisterMeal}
-                disabled={!activeMeal}
-                className="px-8 py-3 bg-[#1abc9c] text-white rounded-xl font-black shadow-lg shadow-[#1abc9c]/20 hover:bg-emerald-600 transition-all uppercase tracking-widest text-xs flex items-center gap-2 disabled:bg-slate-200 disabled:shadow-none"
+                disabled={
+                  !activeMeal ||
+                  loading ||
+                  todayLogs[selectedStudent.id]?.includes(
+                    MEAL_SCHEDULE[activeMeal].label,
+                  )
+                }
+                className={`px-8 py-3 rounded-xl font-black shadow-lg transition-all uppercase tracking-widest text-xs flex items-center gap-2 disabled:shadow-none ${
+                  todayLogs[selectedStudent.id]?.includes(
+                    activeMeal ? MEAL_SCHEDULE[activeMeal].label : "",
+                  )
+                    ? "bg-slate-100 text-slate-400 cursor-not-allowed"
+                    : "bg-[#1ABB9C] text-white shadow-[#1ABB9C]/20 hover:bg-emerald-600"
+                }`}
               >
-                <CheckIconSmallNav />
-                Confirmar {activeMeal && MEAL_SCHEDULE[activeMeal].label}
+                {loading ? (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                ) : todayLogs[selectedStudent.id]?.includes(
+                    activeMeal ? MEAL_SCHEDULE[activeMeal].label : "",
+                  ) ? (
+                  <CheckIconCircle size={16} />
+                ) : (
+                  <CheckIconSmallNav />
+                )}
+                {loading
+                  ? "Registrando..."
+                  : todayLogs[selectedStudent.id]?.includes(
+                        activeMeal ? MEAL_SCHEDULE[activeMeal].label : "",
+                      )
+                    ? "Ya Registrado"
+                    : `Confirmar ${activeMeal && MEAL_SCHEDULE[activeMeal].label}`}
               </button>
             </div>
           </div>
@@ -492,41 +689,67 @@ function MealCard({
   type,
   isActive,
   isDone,
+  isRegistered,
   onMark,
 }: {
   type: MealType;
   isActive: boolean;
   isDone: boolean;
+  isRegistered?: boolean;
   onMark: () => void;
 }) {
   const schedule = MEAL_SCHEDULE[type];
 
-  if (isActive) {
+  if (isRegistered) {
     return (
-      <div className="bg-white border-2 border-[#1abc9c] rounded-2xl p-5 flex flex-col items-center shadow-[0_5px_15px_-5px_rgba(26,188,156,0.2)] relative z-10 transition-all hover:translate-y-[-2px]">
-        <div className="absolute -top-3 bg-[#1abc9c] text-white text-[9px] font-black px-3 py-1 rounded-full tracking-widest uppercase">
-          Activo
+      <div className="bg-white border border-emerald-100 rounded-[2.5rem] p-8 flex flex-col items-center shadow-[0_20px_60px_rgba(26,187,156,0.1)] relative overflow-hidden group border-b-[8px] border-b-[#1ABB9C]">
+        <div className="absolute top-4 right-4 text-[#1ABB9C] animate-in zoom-in duration-500">
+          <CheckIconCircle size={24} />
         </div>
-        <div className="w-12 h-12 rounded-xl bg-[#1abc9c]/10 flex items-center justify-center text-[#1abc9c] mb-3">
+        <div className="w-16 h-16 rounded-[1.5rem] bg-[#1ABB9C] flex items-center justify-center text-white mb-5 shadow-lg shadow-[#1ABB9C]/30 transition-transform group-hover:scale-110">
           <MealIcon type={type} />
         </div>
-        <h3 className="text-base font-black text-slate-800 mb-1 uppercase tracking-tight">
+        <h3 className="text-xl font-black text-[#2A3F54] mb-1 uppercase tracking-tight">
           {schedule.label}
         </h3>
-        <p className="text-[10px] font-bold text-[#1abc9c] mb-4 uppercase tracking-wider">
+        <p className="text-[10px] font-black text-[#1ABB9C] mb-6 uppercase tracking-[0.3em] bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+          VERIFICADO HOY
+        </p>
+        <div className="w-full mt-auto">
+          <div className="w-full bg-slate-50 border border-slate-100 text-slate-400 font-black py-4 rounded-2xl flex items-center justify-center gap-3 text-xs uppercase tracking-widest cursor-not-allowed">
+            SERVICIO COMPLETADO
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isActive) {
+    return (
+      <div className="bg-white border-2 border-[#1ABB9C] rounded-[2.5rem] p-8 flex flex-col items-center shadow-[0_32px_80px_-16px_rgba(26,187,156,0.2)] relative z-10 transition-all hover:translate-y-[-4px] border-b-[8px] border-b-[#1ABB9C]">
+        <div className="absolute -top-3 bg-gradient-to-r from-[#1ABB9C] to-[#16a085] text-white text-[10px] font-black px-6 py-1.5 rounded-full tracking-[0.2em] uppercase shadow-lg">
+          Servicio Activo
+        </div>
+        <div className="w-16 h-16 rounded-[1.5rem] bg-[#1ABB9C]/10 flex items-center justify-center text-[#1ABB9C] mb-5 group-hover:scale-110 transition-transform">
+          <MealIcon type={type} />
+        </div>
+        <h3 className="text-xl font-black text-[#2A3F54] mb-1 uppercase tracking-tight">
+          {schedule.label}
+        </h3>
+        <p className="text-[10px] font-black text-[#1ABB9C] mb-8 uppercase tracking-[0.2em]">
           {schedule.time}
         </p>
-        <div className="w-full">
+        <div className="w-full mt-auto">
           <button
             onClick={onMark}
-            className="w-full bg-[#1abc9c] hover:bg-emerald-600 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-md shadow-[#1abc9c]/20 group"
+            className="w-full bg-[#1ABB9C] hover:bg-[#16a085] text-white font-black py-4 rounded-[1.2rem] flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-xl shadow-[#1ABB9C]/30 group inline-flex"
           >
             <CheckIconCircle
-              size={18}
-              className="transition-transform group-hover:scale-110"
+              size={20}
+              className="transition-transform group-hover:scale-125"
             />
-            <span className="tracking-tight text-sm uppercase">
-              Marcar ahora
+            <span className="tracking-[0.1em] text-xs uppercase">
+              MARCAR ASISTENCIA
             </span>
           </button>
         </div>
@@ -536,21 +759,21 @@ function MealCard({
 
   return (
     <div
-      className={`bg-white border border-slate-100 rounded-2xl p-5 flex flex-col items-center transition-all ${isDone ? "opacity-60 grayscale-[0.5]" : "opacity-60"}`}
+      className={`bg-white/50 border border-slate-200 rounded-[2.5rem] p-8 flex flex-col items-center transition-all ${isDone ? "grayscale-[0.8] opacity-50" : "opacity-70"}`}
     >
-      <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-300 mb-3 border border-slate-50">
+      <div className="w-14 h-14 rounded-[1.2rem] bg-slate-100 flex items-center justify-center text-slate-300 mb-5 border border-slate-200 shadow-inner">
         <MealIcon type={type} inactive />
       </div>
-      <h3 className="text-sm font-bold text-slate-600 mb-0.5 uppercase tracking-tight">
+      <h3 className="text-lg font-black text-slate-500 mb-1 uppercase tracking-tight">
         {schedule.label}
       </h3>
-      <p className="text-[9px] font-medium text-slate-400 mb-4 uppercase tracking-widest">
+      <p className="text-[9px] font-black text-slate-400 mb-6 uppercase tracking-widest">
         {schedule.time}
       </p>
-      <div className="w-full">
-        <div className="flex items-center gap-2 text-slate-400 bg-slate-50 px-3 py-2 rounded-lg w-full justify-center border border-slate-100">
-          <span className="text-[9px] font-bold tracking-widest uppercase">
-            {isDone ? "Cerrado" : "Próximamente"}
+      <div className="w-full mt-auto">
+        <div className="flex items-center gap-2 text-slate-400 bg-slate-100 px-4 py-3 rounded-xl w-full justify-center border border-slate-200 shadow-inner">
+          <span className="text-[9px] font-black tracking-[0.2em] uppercase">
+            {isDone ? "SERVICIO CERRADO" : "PRÓXIMAMENTE"}
           </span>
         </div>
       </div>
@@ -570,7 +793,7 @@ const MealIcon = ({
     : type === "desayuno"
       ? "#EAB308"
       : type === "almuerzo"
-        ? "#1abc9c"
+        ? "#1ABB9C"
         : "#8B5CF6";
 
   if (type === "desayuno")
@@ -694,7 +917,8 @@ const CheckIconCircle = ({ size = 20, className = "" }) => (
     strokeLinecap="round"
     strokeLinejoin="round"
   >
-    <path d="M20 6 9 17l-5-5" />
+    <path d="m22 11.08V12a10 10 0 1 1-5.93-9.14" />
+    <polyline points="22 4 12 14.01 9 11.01" />
   </svg>
 );
 
@@ -705,7 +929,7 @@ const VerifiedIcon = () => (
     height="18"
     viewBox="0 0 24 24"
     fill="none"
-    stroke="#1abc9c"
+    stroke="#1ABB9C"
     strokeWidth="3"
     strokeLinecap="round"
     strokeLinejoin="round"
@@ -738,7 +962,7 @@ const CalendarTodayIcon = () => (
     height="20"
     viewBox="0 0 24 24"
     fill="none"
-    stroke="#1abc9c"
+    stroke="#1ABB9C"
     strokeWidth="2.5"
     strokeLinecap="round"
     strokeLinejoin="round"

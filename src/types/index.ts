@@ -20,4 +20,6 @@ export interface MealLog {
   mealType: string;
   timestamp: string;
   status: 'Verificado' | 'Anulado' | 'Duplicado';
+  hasExtra?: boolean;
+  extraNotes?: string;
 }

@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { MOCK_STUDENTS } from "@/src/data/mock";
+import { useState, useEffect, useCallback } from "react";
 import { Student } from "@/src/types";
 import Link from "next/link";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import Portal from "@/src/components/ui/Portal";
+import { supabase } from "@/src/lib/supabase";
 
 const studentSchema = z.object({
   firstName: z.string().min(2, "El nombre es requerido"),
@@ -40,6 +40,45 @@ const studentSchema = z.object({
 type StudentFormData = z.infer<typeof studentSchema>;
 
 export default function StudentsPage() {
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchStudents = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("students")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching students:", error);
+    } else {
+      // Map database snake_case to frontend camelCase if necessary,
+      // but assuming the table uses camelCase or mapping is handled here
+      const mappedStudents: Student[] = (data || []).map((s: any) => ({
+        id: s.id,
+        firstName: s.first_name,
+        lastName: s.last_name,
+        code: s.code,
+        dni: s.dni,
+        email: s.email,
+        phone: s.phone,
+        address: s.address,
+        birthDate: s.birth_date,
+        joinedDate: s.joined_date,
+        notes: s.notes,
+        active: s.active,
+        avatar: s.avatar_url,
+      }));
+      setStudents(mappedStudents);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchStudents();
+  }, [fetchStudents]);
+
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<
     "all" | "active" | "inactive"
@@ -49,10 +88,14 @@ export default function StudentsPage() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [modalMode, setModalMode] = useState<"add" | "edit">("add");
+  const [successType, setSuccessType] = useState<"add" | "edit" | "delete">(
+    "add",
+  );
 
-  const filteredStudents = MOCK_STUDENTS.filter((student) => {
+  const filteredStudents = students.filter((student) => {
     const fullName = `${student.firstName} ${student.lastName}`.toLowerCase();
     const matchesSearch =
       fullName.includes(searchTerm.toLowerCase()) ||
@@ -126,22 +169,84 @@ export default function StudentsPage() {
       phone: "",
       address: "",
       birthDate: "",
-      code: `2024${Math.floor(Math.random() * 90000) + 10000}`,
+      code: "",
       notes: "",
       active: true,
     });
     setIsFormModalOpen(true);
   };
 
-  const onSubmit: SubmitHandler<StudentFormData> = (data) => {
-    console.log("Datos validados:", data);
-    // Here we would typically update mock data or call an API
-    alert(
-      modalMode === "add"
-        ? "Estudiante registrado con éxito"
-        : "Datos actualizados con éxito",
-    );
-    setIsFormModalOpen(false);
+  const onSubmit: SubmitHandler<StudentFormData> = async (data) => {
+    try {
+      setLoading(true);
+      const dbData = {
+        first_name: data.firstName,
+        last_name: data.lastName,
+        dni: data.dni,
+        email: data.email,
+        phone: data.phone,
+        address: data.address,
+        birth_date: data.birthDate,
+        code: data.code,
+        notes: data.notes,
+        active: data.active,
+      };
+
+      if (modalMode === "add") {
+        const { error } = await supabase.from("students").insert([dbData]);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("students")
+          .update(dbData)
+          .eq("id", selectedStudent?.id);
+        if (error) throw error;
+      }
+
+      await fetchStudents();
+      setIsFormModalOpen(false);
+      reset();
+      setSuccessType(modalMode);
+      setIsSuccessModalOpen(true);
+
+      // Auto close after 3 seconds
+      setTimeout(() => {
+        setIsSuccessModalOpen(false);
+      }, 3000);
+    } catch (error: any) {
+      console.error("Error saving student:", error);
+      alert("Error al guardar los datos: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedStudent) return;
+    try {
+      setLoading(true);
+      const { error } = await supabase
+        .from("students")
+        .delete()
+        .eq("id", selectedStudent.id);
+
+      if (error) throw error;
+
+      await fetchStudents();
+      setIsDeleteModalOpen(false);
+      setSuccessType("delete");
+      setIsSuccessModalOpen(true);
+
+      // Auto close after 3 seconds
+      setTimeout(() => {
+        setIsSuccessModalOpen(false);
+      }, 3000);
+    } catch (error: any) {
+      console.error("Error deleting student:", error);
+      alert("Error al eliminar: " + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOpenDelete = (student: Student) => {
@@ -672,16 +777,62 @@ export default function StudentsPage() {
 
               <div className="grid grid-cols-1 gap-3">
                 <button
-                  onClick={() => setIsDeleteModalOpen(false)}
-                  className="w-full py-4 bg-rose-500 text-white font-black rounded-2xl hover:bg-rose-600 transition-all text-[10px] uppercase tracking-[0.2em] shadow-[0_12px_24px_-8px_rgba(244,63,94,0.4)]"
+                  onClick={handleDelete}
+                  disabled={loading}
+                  className="w-full py-4 bg-rose-500 text-white font-black rounded-2xl hover:bg-rose-600 transition-all text-[10px] uppercase tracking-[0.2em] shadow-[0_12px_24px_-8px_rgba(244,63,94,0.4)] disabled:opacity-50"
                 >
-                  Sí, Eliminar Registro
+                  {loading ? "Eliminando..." : "Sí, Eliminar Registro"}
                 </button>
                 <button
                   onClick={() => setIsDeleteModalOpen(false)}
-                  className="w-full py-4 bg-white border border-slate-200 text-slate-400 font-bold rounded-2xl hover:bg-slate-50 transition-all text-[10px] uppercase tracking-[0.2em]"
+                  disabled={loading}
+                  className="w-full py-4 bg-white border border-slate-200 text-slate-400 font-bold rounded-2xl hover:bg-slate-50 transition-all text-[10px] uppercase tracking-[0.2em] disabled:opacity-50"
                 >
                   Mantener Estudiante
+                </button>
+              </div>
+            </div>
+          </div>
+        </Portal>
+      )}
+
+      {/* Success Modal */}
+      {isSuccessModalOpen && (
+        <Portal>
+          <div
+            className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300"
+            onClick={() => setIsSuccessModalOpen(false)}
+          >
+            <div
+              className="bg-white rounded-[2.5rem] p-10 shadow-[0_32px_128px_-16px_rgba(26,187,156,0.3)] max-w-sm w-full text-center animate-in zoom-in-95 duration-500 relative overflow-hidden border border-emerald-50"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Background Decoration */}
+              <div className="absolute -top-24 -right-24 w-48 h-48 bg-emerald-50 rounded-full blur-3xl opacity-50"></div>
+              <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-emerald-50 rounded-full blur-3xl opacity-50"></div>
+
+              <div className="relative z-10">
+                <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-8 shadow-xl shadow-emerald-500/20 animate-bounce">
+                  <CheckIconCircle size={48} className="text-white" />
+                </div>
+
+                <h2 className="text-2xl font-black text-slate-800 tracking-tight leading-none mb-4">
+                  ¡Operación Exitosa!
+                </h2>
+
+                <p className="text-slate-500 font-medium text-sm leading-relaxed mb-8 px-4">
+                  {successType === "add"
+                    ? "El pensionista ha sido registrado correctamente en la base de datos."
+                    : successType === "edit"
+                      ? "La información del estudiante ha sido actualizada exitosamente."
+                      : "El registro del estudiante ha sido eliminado de forma permanente."}
+                </p>
+
+                <button
+                  onClick={() => setIsSuccessModalOpen(false)}
+                  className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl hover:bg-slate-800 transition-all text-[11px] uppercase tracking-[0.2em] shadow-lg"
+                >
+                  Entendido
                 </button>
               </div>
             </div>

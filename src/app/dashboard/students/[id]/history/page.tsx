@@ -1,9 +1,9 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
-import { MOCK_STUDENTS, MOCK_MEAL_LOGS } from "@/src/data/mock";
+import { use, useState, useEffect, useCallback } from "react";
 import { Student, MealLog } from "@/src/types";
 import Link from "next/link";
+import { supabase } from "@/src/lib/supabase";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -19,12 +19,60 @@ export default function StudentHistoryPage({ params }: PageProps) {
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
-  useEffect(() => {
-    const found = MOCK_STUDENTS.find((s) => s.id === id);
-    if (found) setStudent(found);
-    // Initialize logs with mock data
-    setLogs(MOCK_MEAL_LOGS);
+  const fetchStudentData = useCallback(async () => {
+    // 1. Fetch Student Profile
+    const { data: studentData, error: studentError } = await supabase
+      .from("students")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (studentError) {
+      console.error("Error fetching student:", studentError);
+    } else if (studentData) {
+      setStudent({
+        id: studentData.id,
+        firstName: studentData.first_name,
+        lastName: studentData.last_name,
+        code: studentData.code,
+        dni: studentData.dni,
+        email: studentData.email,
+        phone: studentData.phone,
+        address: studentData.address,
+        birthDate: studentData.birth_date,
+        joinedDate: studentData.joined_date,
+        notes: studentData.notes,
+        active: studentData.active,
+        avatar: studentData.avatar_url,
+      });
+    }
+
+    // 2. Fetch Meal Logs
+    const { data: logsData, error: logsError } = await supabase
+      .from("meal_logs")
+      .select("*")
+      .eq("student_id", id)
+      .order("timestamp", { ascending: false });
+
+    if (logsError) {
+      console.error("Error fetching logs:", logsError);
+    } else {
+      const mappedLogs: MealLog[] = (logsData || []).map((log: any) => ({
+        id: log.id,
+        studentId: log.student_id,
+        mealType: log.meal_type,
+        timestamp: log.timestamp,
+        status: log.status,
+        hasExtra: log.has_extra,
+        extraNotes: log.extra_notes,
+      }));
+      setLogs(mappedLogs);
+    }
   }, [id]);
+
+  useEffect(() => {
+    fetchStudentData();
+  }, [fetchStudentData]);
 
   if (!student) {
     return (
@@ -37,18 +85,42 @@ export default function StudentHistoryPage({ params }: PageProps) {
     );
   }
 
-  const handleToggleStatus = (logId: string) => {
-    setLogs((prev) =>
-      prev.map((log) => {
-        if (log.id === logId) {
-          return {
-            ...log,
-            status: log.status === "Anulado" ? "Verificado" : "Anulado",
-          };
-        }
-        return log;
-      }),
-    );
+  const handleToggleStatus = async (logId: string, currentStatus: string) => {
+    const newStatus = currentStatus === "Anulado" ? "Verificado" : "Anulado";
+
+    const { error } = await supabase
+      .from("meal_logs")
+      .update({ status: newStatus })
+      .eq("id", logId);
+
+    if (error) {
+      console.error("Error updating status:", error);
+      alert("Error al actualizar el estado");
+    } else {
+      setLogs((prev) =>
+        prev.map((log) =>
+          log.id === logId ? { ...log, status: newStatus as any } : log,
+        ),
+      );
+    }
+  };
+
+  const handleDeleteLog = async (logId: string) => {
+    if (
+      !window.confirm(
+        "¿Estás seguro de que deseas eliminar este registro permanentemente?",
+      )
+    )
+      return;
+
+    const { error } = await supabase.from("meal_logs").delete().eq("id", logId);
+
+    if (error) {
+      console.error("Error deleting log:", error);
+      alert("Error al eliminar el registro");
+    } else {
+      setLogs((prev) => prev.filter((log) => log.id !== logId));
+    }
   };
 
   const filteredLogs = logs
@@ -62,13 +134,13 @@ export default function StudentHistoryPage({ params }: PageProps) {
         logDate.setHours(0, 0, 0, 0);
 
         if (startDate) {
-          const start = new Date(startDate);
-          start.setHours(0, 0, 0, 0);
+          const [y, m, d] = startDate.split("-").map(Number);
+          const start = new Date(y, m - 1, d);
           if (logDate < start) matchesDate = false;
         }
         if (endDate) {
-          const end = new Date(endDate);
-          end.setHours(0, 0, 0, 0);
+          const [y, m, d] = endDate.split("-").map(Number);
+          const end = new Date(y, m - 1, d);
           if (logDate > end) matchesDate = false;
         }
       }
@@ -96,7 +168,7 @@ export default function StudentHistoryPage({ params }: PageProps) {
               Panel de Auditoría
             </p>
             <h1 className="text-3xl font-black text-slate-800 tracking-tight">
-              {student.firstName} {student.lastName}
+              {student.firstName.split(" ")[0]} {student.lastName.split(" ")[0]}
             </h1>
             <div className="flex items-center gap-4 mt-1">
               <p className="text-slate-500 text-xs font-medium">
@@ -113,40 +185,102 @@ export default function StudentHistoryPage({ params }: PageProps) {
         </div>
 
         <div className="flex gap-3 w-full md:w-auto">
-          <button className="flex-1 md:flex-none px-6 py-4 bg-white border border-slate-200 rounded-2xl text-[10px] font-black text-slate-400 uppercase tracking-widest hover:border-amber-500 hover:text-amber-500 transition-all shadow-sm">
-            Histórico de Pagos
-          </button>
           <button className="flex-1 md:flex-none px-6 py-4 bg-[#1ABB9C] text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-[#16a085] transition-all shadow-lg shadow-[#1ABB9C]/20 flex items-center justify-center gap-2">
             <DownloadIcon /> Exportar PDF
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Filters - More compact */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white rounded-[2rem] p-8 border border-slate-200 shadow-sm space-y-8">
-            <div>
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">
-                Filtrar Servicio
-              </h4>
-              <div className="flex flex-col gap-2">
+      <div className="space-y-4">
+        {/* Superior Actions Bar */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <div className="w-1.5 h-6 bg-[#1ABB9C] rounded-full"></div>
+            <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em]">
+              Panel de Filtrado
+            </h4>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="group flex items-center gap-4 bg-white border border-slate-200 px-5 py-2.5 rounded-2xl shadow-sm hover:border-[#1ABB9C]/40 hover:shadow-md transition-all focus-within:ring-4 focus-within:ring-[#1ABB9C]/5">
+              <div className="flex flex-col">
+                <span className="text-[8px] font-black text-[#1ABB9C] uppercase tracking-widest mb-0.5">
+                  Desde
+                </span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-700 outline-none w-32 cursor-pointer"
+                />
+              </div>
+              <div className="w-px h-6 bg-slate-100"></div>
+              <div className="flex flex-col">
+                <span className="text-[8px] font-black text-[#1ABB9C] uppercase tracking-widest mb-0.5">
+                  Hasta
+                </span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-700 outline-none w-32 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setStartDate("");
+                setEndDate("");
+                setActiveTab("Todos");
+              }}
+              className="h-12 w-12 flex items-center justify-center bg-white border border-slate-200 text-slate-400 rounded-2xl hover:text-rose-500 hover:border-rose-200 hover:shadow-lg transition-all group shadow-sm active:scale-95"
+              title="Limpiar filtros"
+            >
+              <FilterIcon
+                size={18}
+                className="transition-transform group-hover:rotate-180 duration-500"
+              />
+            </button>
+          </div>
+        </div>
+
+        {/* Audit Log Display */}
+        <div className="w-full">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-[0_10px_40px_rgba(0,0,0,0.03)] overflow-hidden flex flex-col min-h-[600px]">
+            <div className="p-5 px-8 border-b border-slate-100 flex flex-col lg:flex-row items-center justify-between gap-6 bg-slate-50/[0.3]">
+              <div className="flex items-center gap-4">
+                <div className="p-2.5 bg-[#1ABB9C]/10 rounded-2xl border border-[#1ABB9C]/20 shadow-[0_0_15px_rgba(26,187,156,0.1)]">
+                  <HistoryIcon size={18} className="text-[#1ABB9C]" />
+                </div>
+                <div>
+                  <h3 className="text-[10px] font-black text-[#2A3F54] uppercase tracking-widest leading-none">
+                    Historial
+                  </h3>
+                  <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                    Consumo Diario
+                  </p>
+                </div>
+              </div>
+
+              {/* Integrated Meal Filters */}
+              <div className="flex items-center gap-1.5 bg-slate-100/50 p-1.5 rounded-2xl border border-slate-200/50 shadow-inner">
                 {(["Todos", "Desayuno", "Almuerzo", "Cena"] as const).map(
                   (tab) => (
                     <button
                       key={tab}
                       onClick={() => setActiveTab(tab)}
-                      className={`w-full px-5 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all text-left flex items-center justify-between group ${
+                      className={`px-5 py-2 text-[9px] font-black uppercase tracking-widest rounded-[1rem] transition-all flex items-center gap-3 ${
                         activeTab === tab
-                          ? "bg-[#1ABB9C] text-white shadow-md border-transparent"
-                          : "bg-slate-50 text-slate-400 hover:bg-slate-100 border border-slate-100"
+                          ? "bg-[#1ABB9C] text-white shadow-[0_4px_12px_rgba(0,0,0,0.08)] scale-[1.02]"
+                          : "text-slate-400 hover:text-slate-600"
                       }`}
                     >
                       {tab}
                       <span
-                        className={`text-[8px] px-2 py-0.5 rounded-full ${
+                        className={`text-[8px] flex items-center justify-center min-w-[18px] h-[18px] rounded-full font-bold transition-colors ${
                           activeTab === tab
-                            ? "bg-white/20 text-white"
+                            ? "bg-white text-[#1ABB9C] shadow-sm shadow-[#1ABB9C]/20"
                             : "bg-slate-200 text-slate-500"
                         }`}
                       >
@@ -162,79 +296,18 @@ export default function StudentHistoryPage({ params }: PageProps) {
                   ),
                 )}
               </div>
-            </div>
 
-            <div className="pt-8 border-t border-slate-100">
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">
-                Rango de Fecha
-              </h4>
-              <div className="space-y-4">
-                <div className="relative">
-                  <span className="absolute -top-1.5 left-3 px-1.5 bg-white text-[7px] font-black text-[#1ABB9C] uppercase tracking-widest z-10 border border-slate-100 rounded-full">
-                    Desde
-                  </span>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-slate-600 outline-none focus:border-[#1ABB9C] transition-all"
-                  />
+              <div className="hidden xl:block">
+                <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-2xl border border-slate-100 shadow-sm transition-all hover:shadow-md">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#1ABB9C]"></div>
+                  <p className="text-[9px] font-black text-slate-800 uppercase tracking-widest">
+                    <span className="text-[#1ABB9C]">
+                      {filteredLogs.length}
+                    </span>{" "}
+                    Registros
+                  </p>
                 </div>
-                <div className="relative">
-                  <span className="absolute -top-1.5 left-3 px-1.5 bg-white text-[7px] font-black text-[#1ABB9C] uppercase tracking-widest z-10 border border-slate-100 rounded-full">
-                    Hasta
-                  </span>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-slate-600 outline-none focus:border-[#1ABB9C] transition-all"
-                  />
-                </div>
-                <button
-                  onClick={() => {
-                    setStartDate("");
-                    setEndDate("");
-                    setActiveTab("Todos");
-                  }}
-                  className="w-full py-3 bg-rose-50 text-rose-500 text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-rose-100 transition-all flex items-center justify-center gap-2"
-                >
-                  <FilterIcon size={12} /> Limpiar Filtros
-                </button>
               </div>
-            </div>
-          </div>
-
-          <div className="bg-[#2A3F54] rounded-[2rem] p-8 text-white relative overflow-hidden">
-            <div className="relative z-10">
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3">
-                Observaciones
-              </h4>
-              <p className="text-[11px] text-slate-300 font-medium leading-relaxed italic">
-                {student.notes ||
-                  "No hay notas adicionales enviadas para este expediente."}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Audit Log Display */}
-        <div className="lg:col-span-3">
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[600px]">
-            <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/10">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-white rounded-lg shadow-sm">
-                  <HistoryIcon size={18} className="text-[#1ABB9C]" />
-                </div>
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest leading-none">
-                  Bitácora de Consumo
-                </h3>
-              </div>
-              <p className="text-[10px] font-bold text-slate-400 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100">
-                Mostrando{" "}
-                <span className="text-[#1ABB9C]">{filteredLogs.length}</span>{" "}
-                registros
-              </p>
             </div>
 
             <div className="p-0 overflow-x-auto">
@@ -302,60 +375,90 @@ export default function StudentHistoryPage({ params }: PageProps) {
                         </td>
                         <td className="px-8 py-6 whitespace-nowrap">
                           <div
-                            className={`flex items-center gap-3 ${log.status === "Anulado" ? "opacity-50" : ""}`}
+                            className={`flex items-center gap-4 transition-all ${log.status === "Anulado" ? "opacity-50 grayscale" : ""}`}
                           >
                             <div
-                              className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                              className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${
                                 log.mealType === "Desayuno"
-                                  ? "bg-amber-100 text-amber-600 shadow-sm shadow-amber-100/50"
+                                  ? "bg-amber-50 text-amber-500 border border-amber-100/50"
                                   : log.mealType === "Almuerzo"
-                                    ? "bg-emerald-100 text-emerald-600 shadow-sm shadow-emerald-100/50"
-                                    : "bg-indigo-100 text-indigo-600 shadow-sm shadow-indigo-100/50"
+                                    ? "bg-emerald-50 text-emerald-500 border border-emerald-100/50"
+                                    : "bg-indigo-50 text-indigo-500 border border-indigo-100/50"
                               }`}
                             >
-                              <ClockIcon size={16} />
+                              <ClockIcon
+                                size={18}
+                                className="transition-transform group-hover:scale-110"
+                              />
                             </div>
                             <div>
-                              <span
-                                className={`text-sm font-black text-slate-800 block ${log.status === "Anulado" ? "line-through" : ""}`}
-                              >
-                                {log.mealType}
-                              </span>
-                              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
-                                Kiosko Principal
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`text-sm font-black text-slate-700 transition-all ${log.status === "Anulado" ? "line-through text-slate-400" : "group-hover:text-[#1ABB9C]"}`}
+                                >
+                                  {log.mealType}
+                                </span>
+                                {log.hasExtra && (
+                                  <span className="text-[7px] font-black text-white bg-rose-500 px-1.5 py-0.5 rounded-md uppercase tracking-widest animate-pulse">
+                                    Extra
+                                  </span>
+                                )}
+                              </div>
+                              {log.hasExtra && log.extraNotes ? (
+                                <p
+                                  className="text-[9px] font-medium text-slate-400 italic mt-0.5 max-w-[150px] truncate"
+                                  title={log.extraNotes}
+                                >
+                                  "{log.extraNotes}"
+                                </p>
+                              ) : (
+                                <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 block">
+                                  Kiosko Central
+                                </span>
+                              )}
                             </div>
                           </div>
                         </td>
                         <td className="px-8 py-6 whitespace-nowrap">
-                          {log.status === "Anulado" ? (
-                            <div className="inline-flex items-center gap-2.5 px-3 py-1.5 bg-rose-50 text-rose-500 text-[9px] font-black uppercase tracking-widest rounded-xl border border-rose-100">
-                              <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div>
-                              Anulado
-                            </div>
-                          ) : (
-                            <div className="inline-flex items-center gap-2.5 px-3 py-1.5 bg-emerald-50 text-emerald-600 text-[9px] font-black uppercase tracking-widest rounded-xl border border-emerald-100">
-                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                              Verificado
-                            </div>
-                          )}
+                          <div className="flex items-center gap-3">
+                            {log.status === "Anulado" ? (
+                              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-rose-50/50 text-rose-500 text-[8px] font-black uppercase tracking-widest rounded-xl border border-rose-100/30">
+                                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.4)]"></div>
+                                Anulado
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase tracking-widest rounded-xl border border-emerald-100/50">
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div>
+                                Verificado
+                              </div>
+                            )}
+                          </div>
                         </td>
                         <td className="px-8 py-6 whitespace-nowrap text-right">
-                          <div className="flex items-center justify-end gap-3">
-                            <p className="hidden xl:block font-mono text-[9px] text-slate-300 font-bold tracking-tighter bg-slate-50 px-2 py-1 rounded border border-slate-100">
-                              ID-{log.id}
-                            </p>
+                          <div className="flex items-center justify-end gap-2">
                             <button
-                              onClick={() => handleToggleStatus(log.id)}
-                              className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all border ${
+                              onClick={() =>
+                                handleToggleStatus(log.id, log.status)
+                              }
+                              className={`px-5 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all border ${
                                 log.status === "Anulado"
-                                  ? "bg-emerald-500 text-white border-transparent hover:bg-emerald-600 shadow-lg shadow-emerald-500/10"
-                                  : "bg-white text-rose-500 border-rose-100 hover:bg-rose-500 hover:text-white shadow-sm"
+                                  ? "bg-[#1ABB9C] text-white border-transparent hover:bg-[#16a085] shadow-lg shadow-[#1ABB9C]/20"
+                                  : "bg-white text-slate-400 border-slate-200 hover:text-[#1ABB9C] hover:border-[#1ABB9C]/30 hover:bg-[#1ABB9C]/5"
                               }`}
                             >
                               {log.status === "Anulado"
                                 ? "Restaurar"
                                 : "Anular"}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteLog(log.id)}
+                              className="h-8 w-8 flex items-center justify-center bg-white border border-slate-200 text-slate-400 rounded-xl hover:text-rose-500 hover:border-rose-200 hover:bg-rose-50 transition-all group shadow-sm"
+                              title="Eliminar registro"
+                            >
+                              <TrashIcon
+                                size={14}
+                                className="group-hover:scale-110 transition-transform"
+                              />
                             </button>
                           </div>
                         </td>
@@ -364,16 +467,20 @@ export default function StudentHistoryPage({ params }: PageProps) {
                   ) : (
                     <tr>
                       <td colSpan={4} className="py-24 text-center">
-                        <div className="flex flex-col items-center">
-                          <div className="w-20 h-20 bg-slate-50 rounded-[2rem] flex items-center justify-center mb-6 text-slate-200 border-2 border-dashed border-slate-200">
-                            <HistoryIcon size={32} />
+                        <div className="flex flex-col items-center animate-in fade-in zoom-in duration-500">
+                          <div className="w-24 h-24 bg-slate-50/50 rounded-[2.5rem] flex items-center justify-center mb-8 text-slate-200 border-2 border-dashed border-slate-200/50 relative">
+                            <HistoryIcon size={32} className="opacity-40" />
+                            <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-white rounded-full flex items-center justify-center text-[#1ABB9C] shadow-sm border border-slate-100">
+                              <FilterIcon size={14} />
+                            </div>
                           </div>
-                          <h5 className="text-slate-400 font-black uppercase tracking-[0.2em] text-[10px]">
-                            No se encontraron registros de auditoría
+                          <h5 className="text-slate-400 font-black uppercase tracking-[0.3em] text-[10px]">
+                            Sin registros encontrados
                           </h5>
-                          <p className="text-slate-300 text-[9px] mt-1 font-medium italic">
-                            Intente ajustar los filtros de fecha o servicio en
-                            el panel lateral.
+                          <p className="text-slate-300 text-[9px] mt-2 font-medium italic max-w-xs leading-relaxed">
+                            No hay actividad para los filtros seleccionados.
+                            Intente ajustar el rango de fechas en el panel
+                            superior.
                           </p>
                         </div>
                       </td>
@@ -443,7 +550,13 @@ const HistoryIcon = ({
   </svg>
 );
 
-const ClockIcon = ({ size = 20 }: { size?: number }) => (
+const ClockIcon = ({
+  size = 20,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
@@ -454,13 +567,20 @@ const ClockIcon = ({ size = 20 }: { size?: number }) => (
     strokeWidth="2.5"
     strokeLinecap="round"
     strokeLinejoin="round"
+    className={className}
   >
     <circle cx="12" cy="12" r="10" />
     <polyline points="12 6 12 12 16 14" />
   </svg>
 );
 
-const FilterIcon = ({ size = 18 }: { size?: number }) => (
+const FilterIcon = ({
+  size = 18,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
@@ -471,6 +591,7 @@ const FilterIcon = ({ size = 18 }: { size?: number }) => (
     strokeWidth="2.5"
     strokeLinecap="round"
     strokeLinejoin="round"
+    className={className}
   >
     <path d="M3 21h18" />
     <path d="M6 8v10" />
@@ -480,7 +601,13 @@ const FilterIcon = ({ size = 18 }: { size?: number }) => (
   </svg>
 );
 
-const WalletIcon = ({ size = 20 }: { size?: number }) => (
+const WalletIcon = ({
+  size = 20,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
@@ -491,6 +618,7 @@ const WalletIcon = ({ size = 20 }: { size?: number }) => (
     strokeWidth="2.5"
     strokeLinecap="round"
     strokeLinejoin="round"
+    className={className}
   >
     <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
     <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
@@ -498,7 +626,13 @@ const WalletIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 );
 
-const TrendingIcon = ({ size = 20 }: { size?: number }) => (
+const TrendingIcon = ({
+  size = 20,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
@@ -509,13 +643,14 @@ const TrendingIcon = ({ size = 20 }: { size?: number }) => (
     strokeWidth="2.5"
     strokeLinecap="round"
     strokeLinejoin="round"
+    className={className}
   >
     <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
     <polyline points="16 7 22 7 22 13" />
   </svg>
 );
 
-const DownloadIcon = () => (
+const DownloadIcon = ({ className = "" }: { className?: string }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width="14"
@@ -526,9 +661,34 @@ const DownloadIcon = () => (
     strokeWidth="3"
     strokeLinecap="round"
     strokeLinejoin="round"
+    className={className}
   >
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
     <polyline points="7 10 12 15 17 10" />
     <line x1="12" y1="15" x2="12" y2="3" />
+  </svg>
+);
+const TrashIcon = ({
+  size = 18,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M3 6h18" />
+    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
   </svg>
 );

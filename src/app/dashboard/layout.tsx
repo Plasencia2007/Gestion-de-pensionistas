@@ -10,25 +10,8 @@ export default function DashboardLayout({
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isMessagesOpen, setIsMessagesOpen] = useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-
   const toggleProfile = () => {
     setIsProfileOpen(!isProfileOpen);
-    setIsMessagesOpen(false);
-    setIsNotificationsOpen(false);
-  };
-
-  const toggleMessages = () => {
-    setIsMessagesOpen(!isMessagesOpen);
-    setIsProfileOpen(false);
-    setIsNotificationsOpen(false);
-  };
-
-  const toggleNotifications = () => {
-    setIsNotificationsOpen(!isNotificationsOpen);
-    setIsProfileOpen(false);
-    setIsMessagesOpen(false);
   };
 
   return (
@@ -73,118 +56,6 @@ export default function DashboardLayout({
         </div>
 
         <div className="flex items-center space-x-2 md:space-x-4">
-          <div className="flex items-center space-x-1 lg:space-x-2 relative">
-            {/* Messages Dropdown */}
-            <div className="relative">
-              <NavIconButton
-                icon={<MailIcon />}
-                badge="6"
-                color="emerald"
-                dark
-                onClick={toggleMessages}
-              />
-              {isMessagesOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setIsMessagesOpen(false)}
-                  ></div>
-                  <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.2)] border border-slate-100 py-0 z-50 animate-in slide-up duration-300 overflow-hidden">
-                    <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                      <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-widest">
-                        Mensajes Recientes
-                      </h4>
-                      <span className="bg-[#1ABB9C] text-white text-[9px] font-black px-2 py-0.5 rounded-full">
-                        6 NUEVOS
-                      </span>
-                    </div>
-                    <div className="max-h-80 overflow-y-auto">
-                      <NotificationItem
-                        title="Pago confirmado"
-                        desc="Juan Pérez ha completado el pago del mes."
-                        time="Hace 5 min"
-                        icon={<MailIcon />}
-                        color="emerald"
-                      />
-                      <NotificationItem
-                        title="Nueva Solicitud"
-                        desc="Un nuevo estudiante solicita información del Plan G-1."
-                        time="Hace 15 min"
-                        icon={<UsersIconSmall />}
-                        color="blue"
-                      />
-                      <NotificationItem
-                        title="Informe Listado"
-                        desc="El reporte de asistencia semanal está listo."
-                        time="Hace 1 hora"
-                        icon={<CalendarIconSmall />}
-                        color="amber"
-                      />
-                    </div>
-                    <button className="w-full py-3 bg-slate-50 hover:bg-slate-100 text-[10px] font-black text-[#1ABB9C] uppercase tracking-[0.2em] transition-colors border-t border-slate-100">
-                      Ver todos los mensajes
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* System Notifications Dropdown */}
-            <div className="relative">
-              <NavIconButton
-                icon={<BellIcon />}
-                badge="3"
-                color="rose"
-                dark
-                onClick={toggleNotifications}
-              />
-              {isNotificationsOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setIsNotificationsOpen(false)}
-                  ></div>
-                  <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.2)] border border-slate-100 py-0 z-50 animate-in slide-up duration-300 overflow-hidden">
-                    <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                      <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-widest">
-                        Alertas del Sistema
-                      </h4>
-                      <span className="bg-rose-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
-                        3 URGENTES
-                      </span>
-                    </div>
-                    <div className="max-h-80 overflow-y-auto">
-                      <NotificationItem
-                        title="Plan Vencido"
-                        desc="El plan de María García ha expirado hoy."
-                        time="Hace 2 min"
-                        icon={<ShieldIconSmall />}
-                        color="rose"
-                      />
-                      <NotificationItem
-                        title="Mantenimiento"
-                        desc="Respaldo de base de datos completado con éxito."
-                        time="Hace 42 min"
-                        icon={<SettingsIconSmall />}
-                        color="slate"
-                      />
-                      <NotificationItem
-                        title="Asistencia Baja"
-                        desc="El Grupo B presenta baja asistencia esta semana."
-                        time="Hace 2 horas"
-                        icon={<BellIcon />}
-                        color="orange"
-                      />
-                    </div>
-                    <button className="w-full py-3 bg-slate-50 hover:bg-slate-100 text-[10px] font-black text-rose-500 uppercase tracking-[0.2em] transition-colors border-t border-slate-100">
-                      Gestionar Notificaciones
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
           <div className="relative">
             <div
               onClick={toggleProfile}

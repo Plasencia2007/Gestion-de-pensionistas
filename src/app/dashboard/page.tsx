@@ -111,43 +111,17 @@ export default function DashboardPage() {
               Gestione recargas y nuevos planes para sus pensionistas de forma
               inmediata.
             </p>
-            <button className="w-full bg-[#1ABB9C] hover:bg-[#16a085] text-white font-bold py-2.5 rounded-lg transition-all shadow-lg shadow-[#1ABB9C]/10 text-sm relative z-10">
-              Gestionar Planes
-            </button>
-          </div>
-
-          <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center">
-              <span className="text-rose-500 mr-2">🔔</span> Notificaciones
-              Criticas
-            </h3>
-            <div className="space-y-4">
-              <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 flex space-x-3">
-                <div className="w-1.5 h-1.5 mt-1.5 bg-amber-500 rounded-full shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-amber-900">
-                    Soporte Técnico
-                  </p>
-                  <p className="text-[11px] text-amber-700 mt-0.5">
-                    Mantenimiento programado para el terminal Kiosk mañana 6AM.
-                  </p>
-                </div>
-              </div>
-              <div className="p-3 bg-[#1ABB9C]/5 rounded-lg border border-[#1ABB9C]/10 flex space-x-3">
-                <div className="w-1.5 h-1.5 mt-1.5 bg-[#1ABB9C] rounded-full shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-[#1ABB9C]">
-                    Nuevo Estudiante
-                  </p>
-                  <p className="text-[11px] text-[#1ABB9C]/80 mt-0.5">
-                    Se completó la carga masiva de datos G-1.
-                  </p>
-                </div>
-              </div>
+            <div className="space-y-3 relative z-10">
+              <button className="w-full bg-[#1ABB9C] hover:bg-[#16a085] text-white font-bold py-2.5 rounded-lg transition-all shadow-lg shadow-[#1ABB9C]/10 text-sm">
+                Gestionar Planes
+              </button>
+              <a
+                href="/kiosk"
+                className="flex items-center justify-center w-full bg-white/10 hover:bg-white hover:text-[#2A3F54] text-white border border-white/20 font-bold py-2.5 rounded-lg transition-all text-sm"
+              >
+                Acceso Estudiantes (Kiosko)
+              </a>
             </div>
-            <button className="w-full mt-4 text-[11px] font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors">
-              Ver todas las notificaciones
-            </button>
           </div>
         </div>
       </div>

@@ -2,20 +2,33 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/src/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [isRightPanelActive, setIsRightPanelActive] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
 
-    // Simulate login delay
-    setTimeout(() => {
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError) {
+      setError("Credenciales inválidas. Por favor, intente de nuevo.");
+      setLoading(false);
+    } else {
       router.push("/dashboard");
-    }, 1200);
+    }
   };
 
   return (
@@ -75,9 +88,26 @@ export default function LoginPage() {
               accede con tu cuenta registrada
             </span>
             <div className="w-full space-y-2">
-              <Input type="email" placeholder="Correo electrónico" required />
-              <Input type="password" placeholder="Contraseña" required />
+              <Input
+                type="email"
+                placeholder="Correo electrónico"
+                value={email}
+                onChange={(v) => setEmail(v)}
+                required
+              />
+              <Input
+                type="password"
+                placeholder="Contraseña"
+                value={password}
+                onChange={(v) => setPassword(v)}
+                required
+              />
             </div>
+            {error && (
+              <p className="text-rose-500 text-[10px] font-black uppercase tracking-tight mt-2 px-2 bg-rose-50 py-1 rounded-md animate-in fade-in slide-in-from-top-1">
+                {error}
+              </p>
+            )}
             <a
               href="#"
               className="text-[#337AB7] text-sm hover:underline mt-4 mb-2 transition-all"
@@ -139,6 +169,7 @@ export default function LoginPage() {
                 Bienvenido al sistema de control y gestión. Por favor, ingresa
                 tus credenciales para acceder al panel administrativo.
               </p>
+
               {/* Toggle to sign up commented out
               <button
                 onClick={() => setIsRightPanelActive(true)}
@@ -152,31 +183,8 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Modern Footer */}
-      <footer className="mt-12 text-center text-slate-500 text-xs animate-in fade-in slide-up space-y-4">
-        <div className="flex flex-col items-center">
-          <p className="text-slate-400 mb-2 font-semibold uppercase tracking-widest text-[10px]">
-            Portal de Autoservicio
-          </p>
-          <a
-            href="/kiosk"
-            className="flex items-center space-x-3 px-8 py-3 bg-white border border-slate-200 rounded-full hover:border-[#1ABB9C] hover:text-[#1ABB9C] transition-all duration-300 shadow-sm group active:scale-95"
-          >
-            <div className="w-8 h-8 rounded-full bg-[#1ABB9C]/10 flex items-center justify-center text-[#1ABB9C] group-hover:bg-[#1ABB9C] group-hover:text-white transition-colors">
-              <UsersIcon />
-            </div>
-            <div className="text-left">
-              <p className="text-sm font-bold leading-none">
-                Acceso Estudiantes
-              </p>
-              <p className="text-[10px] opacity-70">
-                Registra tu consumo en el Kiosko
-              </p>
-            </div>
-          </a>
-        </div>
-
-        <div className="pt-8 opacity-60">
+      <footer className="mt-12 text-center text-slate-500 text-xs animate-in fade-in slide-up space-y-4 w-full max-w-[850px]">
+        <div className="pt-8 opacity-60 border-t border-slate-200">
           <p className="font-medium">© 2026 Gestión de Pensionistas</p>
           <p className="mt-1">
             Desarrollado para una administración eficiente y segura.
@@ -202,16 +210,22 @@ function Input({
   type,
   placeholder,
   required,
+  value,
+  onChange,
 }: {
   type: string;
   placeholder: string;
   required?: boolean;
+  value?: string;
+  onChange?: (val: string) => void;
 }) {
   return (
     <input
       type={type}
       placeholder={placeholder}
       required={required}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
       className="bg-slate-100 border-none px-4 py-3 text-sm rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-[#1ABB9C]/20 transition-all placeholder:text-slate-400"
     />
   );
