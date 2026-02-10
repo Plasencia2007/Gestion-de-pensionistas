@@ -33,6 +33,11 @@ export default function DashboardLayout({
     setIsProfileOpen(!isProfileOpen);
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/");
+  };
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
@@ -152,7 +157,10 @@ export default function DashboardLayout({
 
                   <div className="h-px bg-slate-100 my-2 mx-2"></div>
 
-                  <button className="w-full px-4 py-2.5 text-left text-xs font-black text-rose-500 hover:bg-rose-50 transition-all flex items-center gap-3">
+                  <button
+                    onClick={handleLogout}
+                    className="w-full px-4 py-2.5 text-left text-xs font-black text-rose-500 hover:bg-rose-50 transition-all flex items-center gap-3"
+                  >
                     <div className="w-6 h-6 rounded-lg bg-rose-100/50 flex items-center justify-center text-rose-500">
                       <LogoutIconSmall />
                     </div>
