@@ -16,17 +16,27 @@ export default function DashboardLayout({
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   useEffect(() => {
-    const checkUser = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    // Escucha activa de cabios en la sesión
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
       if (!session) {
         router.push("/");
       } else {
         setLoading(false);
       }
-    };
-    checkUser();
+    });
+
+    // Verificación inicial
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.push("/");
+      } else {
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [router]);
 
   const toggleProfile = () => {
@@ -34,8 +44,10 @@ export default function DashboardLayout({
   };
 
   const handleLogout = async () => {
+    setLoading(true);
     await supabase.auth.signOut();
-    router.push("/");
+    // Forzamos recarga total para limpiar cache del navegador y cookies
+    window.location.href = "/";
   };
 
   if (loading) {
