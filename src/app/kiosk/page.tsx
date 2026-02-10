@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Student } from "@/src/types";
 import { supabase } from "@/src/lib/supabase";
 
-// Meal time ranges
 const MEAL_SCHEDULE = {
   desayuno: {
     start: 6,
@@ -38,6 +37,7 @@ export default function KioskPage() {
   const [lastAction, setLastAction] = useState<{
     student: string;
     meal: string;
+    status: "Verificado" | "Aviso";
   } | null>(null);
   const [countdown, setCountdown] = useState(3);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
@@ -45,15 +45,42 @@ export default function KioskPage() {
   const [mounted, setMounted] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(false);
-  const [todayLogs, setTodayLogs] = useState<Record<string, string[]>>({});
+  const [todayLogs, setTodayLogs] = useState<
+    Record<string, { type: string; status: string; id: string }[]>
+  >({});
+  const [todayExtras, setTodayExtras] = useState<
+    Record<string, { id: string; title: string; price: number }[]>
+  >({});
+  const [filterStatus, setFilterStatus] = useState<
+    "todos" | "desayuno" | "almuerzo" | "cena" | "extras"
+  >("todos");
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
 
-  // Extra servicies states
   const [hasExtra, setHasExtra] = useState(false);
   const [extraNotes, setExtraNotes] = useState("");
 
-  // Update time and determine active meal
+  // New states for adding extras
+  const [newExtraTitle, setNewExtraTitle] = useState("");
+  const [newExtraPrice, setNewExtraPrice] = useState("");
+  const [isAddingExtra, setIsAddingExtra] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
   useEffect(() => {
     setMounted(true);
+
+    const checkFullscreen = () => {
+      const isFull = !!document.fullscreenElement;
+      const isF11 =
+        window.innerWidth >= screen.width &&
+        window.innerHeight >= screen.height;
+      setIsFullscreen(isFull || isF11);
+    };
+
+    document.addEventListener("fullscreenchange", checkFullscreen);
+    window.addEventListener("resize", checkFullscreen);
+    checkFullscreen();
+
     const timer = setInterval(() => {
       const now = new Date();
       setCurrentTime(now);
@@ -79,7 +106,11 @@ export default function KioskPage() {
 
       setActiveMeal(foundMeal);
     }, 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("fullscreenchange", checkFullscreen);
+      window.removeEventListener("resize", checkFullscreen);
+    };
   }, []);
 
   const fetchStudents = useCallback(async () => {
@@ -107,36 +138,100 @@ export default function KioskPage() {
         firstName: s.first_name,
         lastName: s.last_name,
         code: s.code,
-        dni: s.dni,
-        email: s.email,
-        phone: s.phone,
-        address: s.address,
-        birthDate: s.birth_date,
-        joinedDate: s.joined_date,
-        notes: s.notes,
-        active: s.active,
+        dni: s.dni || "",
+        email: s.email || "",
+        phone: s.phone || "",
+        parentPhone: s.parent_phone || "",
+        address: s.address || "",
+        birthDate: s.birth_date || "",
+        career: s.career || "",
+        joinedDate: s.created_at || new Date().toISOString(),
+        subscribedMeals: s.subscribed_meals || [],
+        notes: s.notes || "",
         avatar: s.avatar_url,
+        active: s.active,
       }));
       setStudents(mappedStudents);
 
-      // Fetch today's logs for these students
       const studentIds = mappedStudents.map((s) => s.id);
       if (studentIds.length > 0) {
         const startOfDay = new Date();
         startOfDay.setHours(0, 0, 0, 0);
 
+        // Fetch Meal Logs
         const { data: logsData } = await supabase
           .from("meal_logs")
-          .select("student_id, meal_type")
+          .select("id, student_id, meal_type, status")
           .in("student_id", studentIds)
           .gte("timestamp", startOfDay.toISOString());
 
-        const logMap: Record<string, string[]> = {};
-        logsData?.forEach((log) => {
+        // Fetch Extras Logs
+        const { data: extrasData } = await supabase
+          .from("student_extras")
+          .select("id, student_id, title, price")
+          .in("student_id", studentIds)
+          .gte("created_at", startOfDay.toISOString());
+
+        // AUTO-SYNC: Ensure every subscribed meal has a physical log today
+        const logsToInsert: any[] = [];
+        const currentLogs = logsData || [];
+
+        mappedStudents.forEach((student) => {
+          const studentLogs = currentLogs.filter(
+            (l) => l.student_id === student.id,
+          );
+          student.subscribedMeals.forEach((mealLabel) => {
+            const exists = studentLogs.some((l) => l.meal_type === mealLabel);
+            if (!exists) {
+              logsToInsert.push({
+                student_id: student.id,
+                meal_type: mealLabel,
+                status: "Verificado",
+                timestamp: new Date().toISOString(),
+              });
+            }
+          });
+        });
+
+        if (logsToInsert.length > 0) {
+          const { data: insertedData, error: syncError } = await supabase
+            .from("meal_logs")
+            .insert(logsToInsert)
+            .select();
+
+          if (!syncError && insertedData) {
+            currentLogs.push(...insertedData);
+          }
+        }
+
+        const logMap: Record<
+          string,
+          { type: string; status: string; id: string }[]
+        > = {};
+        currentLogs.forEach((log) => {
           if (!logMap[log.student_id]) logMap[log.student_id] = [];
-          logMap[log.student_id].push(log.meal_type);
+          logMap[log.student_id].push({
+            type: log.meal_type,
+            status: log.status,
+            id: log.id,
+          });
         });
         setTodayLogs(logMap);
+
+        // Map Extras
+        const extrasMap: Record<
+          string,
+          { id: string; title: string; price: number }[]
+        > = {};
+        (extrasData || []).forEach((extra: any) => {
+          if (!extrasMap[extra.student_id]) extrasMap[extra.student_id] = [];
+          extrasMap[extra.student_id].push({
+            id: extra.id,
+            title: extra.title,
+            price: extra.price,
+          });
+        });
+        setTodayExtras(extrasMap);
       }
     }
     setLoading(false);
@@ -150,28 +245,56 @@ export default function KioskPage() {
     return () => clearTimeout(delayDebounceFn);
   }, [fetchStudents]);
 
-  const handleRegisterMeal = async () => {
-    if (!selectedStudent || !activeMeal) return;
+  // ... (keeping existing meal logic) ...
 
-    // Prevention: Check if already registered
-    const mealLabel = MEAL_SCHEDULE[activeMeal].label;
-    if (todayLogs[selectedStudent.id]?.includes(mealLabel)) {
+  const handleRegisterMeal = async (
+    mealTypeOverride?: MealType,
+    statusOverride: "Verificado" | "Aviso" = "Verificado",
+  ) => {
+    // ... (logic remains) ...
+    const typeToRegister = mealTypeOverride || activeMeal;
+    if (!selectedStudent || !typeToRegister) return;
+
+    const mealLabel = MEAL_SCHEDULE[typeToRegister].label;
+    const existingLog = todayLogs[selectedStudent.id]?.find(
+      (log) => log.type === mealLabel,
+    );
+    // ...
+    // Block if already verified AND we are trying to verify again
+    if (
+      existingLog &&
+      existingLog.status === "Verificado" &&
+      statusOverride === "Verificado"
+    ) {
       alert("Este servicio ya fue registrado hoy para este estudiante.");
       return;
     }
 
     setLoading(true);
 
-    const { error } = await supabase.from("meal_logs").insert([
-      {
-        student_id: selectedStudent.id,
-        meal_type: mealLabel,
-        status: "Verificado",
-        timestamp: new Date().toISOString(),
-        has_extra: hasExtra,
-        extra_notes: hasExtra ? extraNotes : null,
-      },
-    ]);
+    const logData = {
+      student_id: selectedStudent.id,
+      meal_type: mealLabel,
+      status: statusOverride,
+      timestamp: new Date().toISOString(),
+      has_extra: statusOverride === "Verificado" ? hasExtra : false,
+      extra_notes:
+        statusOverride === "Verificado" && hasExtra ? extraNotes : null,
+    };
+
+    let query;
+    if (existingLog && existingLog.id) {
+      // Update
+      query = supabase
+        .from("meal_logs")
+        .update(logData)
+        .eq("id", existingLog.id);
+    } else {
+      // Insert
+      query = supabase.from("meal_logs").insert([logData]);
+    }
+
+    const { error } = await query;
 
     if (error) {
       console.error("Error registering meal:", error);
@@ -182,80 +305,114 @@ export default function KioskPage() {
 
     const studentName = `${selectedStudent.firstName} ${selectedStudent.lastName}`;
 
-    setLastAction({
-      student: studentName,
-      meal: mealLabel,
-    });
-    setCountdown(3);
-
-    // Update local todayLogs state
-    setTodayLogs((prev) => ({
-      ...prev,
-      [selectedStudent.id]: [...(prev[selectedStudent.id] || []), mealLabel],
-    }));
-
-    setSelectedStudent(null);
-    setSearchTerm("");
-    // fetchStudents will be triggered by searchTerm change or we can call it directly
-    fetchStudents();
-    setHasExtra(false);
-    setExtraNotes("");
-    setLoading(false);
-
-    // Countdown logic
-    const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setLastAction(null);
-          return 3;
-        }
-        return prev - 1;
+    if (statusOverride === "Aviso") {
+      setToastMessage(`¡Cobro de ${mealLabel} anulado con éxito!`);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+      // Removed: setSelectedStudent(null); -> Keep student selected
+      // Removed: setSearchTerm("");
+      setHasExtra(false);
+      setExtraNotes("");
+      setLoading(false);
+      fetchStudents(); // Refresh data to update UI state
+    } else {
+      setLastAction({
+        student: studentName,
+        meal: mealLabel,
+        status: "Verificado",
       });
-    }, 1000);
+      setCountdown(3);
+      setSelectedStudent(null);
+      setSearchTerm("");
+      setHasExtra(false);
+      setExtraNotes("");
+      setLoading(false);
+      fetchStudents();
+
+      const interval = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            setLastAction(null);
+            return 3;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
   };
 
   if (!mounted) return null;
 
   return (
     <div className="min-h-screen bg-[#F0F2F5] text-slate-800 font-sans flex flex-col relative overflow-hidden">
-      {/* Background layer with blur if success */}
+      {/* Discreet Toast Notification - Moved to Top Right as requested */}
+      {showToast && (
+        <div className="fixed top-28 right-8 z-[100] animate-in slide-in-from-right duration-500">
+          <div className="bg-[#1ABB9C] text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-4 border-2 border-white/20 backdrop-blur-md">
+            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+              <CheckIconCircle size={20} />
+            </div>
+            <p className="font-extrabold uppercase tracking-widest text-sm">
+              {toastMessage}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div
         className={`flex flex-col flex-1 transition-all duration-500 ${lastAction ? "blur-md opacity-20 scale-[0.98] pointer-events-none" : ""}`}
       >
-        {/* SaaS Header */}
         <header className="sticky top-0 z-40 bg-[#2A3F54] backdrop-blur-md border-b border-white/10 px-6 py-4 lg:px-20 shadow-xl">
           <div className="max-w-[1200px] mx-auto flex items-center justify-between">
-            {/* Left Side: Brand and Breadcrumb */}
             <div className="flex items-center gap-6">
-              <Link
-                href="/dashboard"
-                className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white transition-colors font-bold text-sm tracking-wider"
+              <div
+                className={`flex items-center gap-6 transition-all duration-300 ${isFullscreen ? "opacity-0 invisible w-0 -ml-6" : "opacity-100 visible"}`}
               >
-                <ArrowLeftIcon />
-                <span className="uppercase tracking-widest whitespace-nowrap">
-                  Volver
-                </span>
-              </Link>
+                {selectedStudent ? (
+                  <button
+                    onClick={() => setSelectedStudent(null)}
+                    className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white transition-colors font-bold text-sm tracking-wider"
+                  >
+                    <ArrowLeftIcon />
+                    <span className="uppercase tracking-widest whitespace-nowrap">
+                      Volver
+                    </span>
+                  </button>
+                ) : (
+                  <Link
+                    href="/dashboard"
+                    className="flex items-center gap-2 px-4 py-2 text-slate-300 hover:text-white transition-colors font-bold text-sm tracking-wider"
+                  >
+                    <ArrowLeftIcon />
+                    <span className="uppercase tracking-widest whitespace-nowrap">
+                      Volver
+                    </span>
+                  </Link>
+                )}
+              </div>
 
               <div className="h-8 w-px bg-white/10 hidden sm:block"></div>
 
               <div className="flex items-center gap-3">
-                <div className="bg-[#1ABB9C] p-1.5 rounded-lg shadow-sm shadow-[#1ABB9C]/50 text-white shrink-0">
-                  <LogoIconPrimary />
+                <div className="w-10 h-10 bg-white rounded-lg shadow-sm shadow-black/20 overflow-hidden shrink-0">
+                  <img
+                    src="/logo.png"
+                    alt="Logo"
+                    className="w-full h-full object-cover"
+                  />
                 </div>
                 <div className="hidden xs:block">
                   <h1 className="text-lg font-extrabold tracking-tight text-white uppercase leading-none">
-                    PENSION<span className="text-[#1ABB9C]">ADMIN</span>
+                    RIQUITO<span className="text-[#1ABB9C]">.PE</span>
                   </h1>
                   <p className="text-[10px] font-semibold text-slate-400 mt-1 tracking-widest uppercase">
-                    Kiosk Pro v3.0
+                    Sistema de Pensionistas
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Right Side Info */}
             <div className="flex items-center gap-8">
               <div className="hidden md:flex flex-col items-end mr-2 text-right">
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
@@ -281,7 +438,6 @@ export default function KioskPage() {
 
         <main className="flex-1 max-w-6xl mx-auto px-6 py-10 w-full">
           {!selectedStudent ? (
-            /* List Interface */
             <div className="w-full flex flex-col h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
               <div className="w-full max-w-2xl mx-auto mb-12">
                 <div className="relative group transition-all duration-500">
@@ -368,8 +524,11 @@ export default function KioskPage() {
                               </span>
                             </td>
                             <td className="px-10 py-6 text-right">
-                              {todayLogs[student.id]?.includes(
-                                MEAL_SCHEDULE[activeMeal || "desayuno"].label,
+                              {todayLogs[student.id]?.some(
+                                (log) =>
+                                  log.type ===
+                                    MEAL_SCHEDULE[activeMeal || "desayuno"]
+                                      .label && log.status === "Verificado",
                               ) ? (
                                 <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-[#1ABB9C] rounded-full border border-emerald-100 font-black text-[10px] uppercase tracking-widest animate-in zoom-in-95">
                                   <CheckIconCircle size={14} />
@@ -406,192 +565,326 @@ export default function KioskPage() {
             /* Profile Detail View */
             <div className="animate-in fade-in transition-all duration-300 max-w-5xl mx-auto">
               {/* Student Profile Header */}
-              <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
-                <div className="flex items-center gap-4">
+              <div className="flex flex-col md:flex-row items-center justify-between mb-10 gap-6">
+                <div className="flex items-center gap-5">
                   <div className="relative">
-                    <div className="w-16 h-16 rounded-2xl bg-[#1ABB9C] flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-[#1ABB9C]/20 overflow-hidden">
+                    <div className="w-16 h-16 rounded-2xl bg-[#1ABB9C] flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-[#1ABB9C]/20 overflow-hidden transition-transform hover:scale-105">
                       {selectedStudent.firstName[0]}
                       {selectedStudent.lastName[0]}
                     </div>
-                    <div className="absolute -bottom-1 -right-1 bg-white p-1 rounded-full shadow-md border-2 border-slate-50">
+                    <div className="absolute -bottom-1 -right-1 bg-white p-1.5 rounded-full shadow-md border-2 border-slate-50">
                       <VerifiedIcon />
                     </div>
                   </div>
                   <div>
-                    <h1 className="text-xl font-extrabold text-slate-800 mb-0.5 leading-tight">
+                    <h1 className="text-2xl font-black text-slate-800 mb-1 leading-tight tracking-tight">
                       {selectedStudent.firstName} {selectedStudent.lastName}
                     </h1>
                     <div className="flex items-center gap-3">
-                      <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1 uppercase tracking-wider">
+                      <span className="text-[10px] font-black text-slate-400 flex items-center gap-2 uppercase tracking-[0.2em]">
                         <BadgeIcon /> {selectedStudent.code}
                       </span>
-                      <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase tracking-wider">
+                      <div className="w-1.5 h-1.5 rounded-full bg-slate-200"></div>
+                      <span className="text-[10px] font-black bg-[#2A3F54]/5 text-[#2A3F54] px-3 py-1 rounded-full uppercase tracking-widest border border-[#2A3F54]/10">
                         Pensionista G-1
                       </span>
                     </div>
                   </div>
                 </div>
-                <div className="text-right md:block hidden">
-                  <h2 className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.2em] mb-0.5">
-                    Registro Automático
-                  </h2>
-                  <div className="flex items-center justify-end gap-2 text-sm font-bold text-slate-500">
-                    <CalendarTodayIcon />
-                    <span>
-                      {currentTime.toLocaleDateString("es-ES", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </span>
+
+                <div className="flex items-center gap-6">
+                  <div className="text-right hidden sm:block">
+                    <h2 className="text-[9px] font-black text-slate-300 uppercase tracking-[0.3em] mb-1">
+                      Registro Automático
+                    </h2>
+                    <div className="flex items-center justify-end gap-2 text-xs font-black text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
+                      <CalendarTodayIcon />
+                      <span>
+                        {currentTime.toLocaleDateString("es-ES", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </span>
+                    </div>
                   </div>
+
+                  <button
+                    onClick={() => {
+                      setLoading(true);
+                      fetchStudents();
+                    }}
+                    disabled={loading}
+                    className="p-4 bg-white border border-slate-200 rounded-2xl text-slate-500 hover:text-[#1ABB9C] hover:border-[#1ABB9C] transition-all shadow-sm active:scale-95 disabled:opacity-50 group"
+                    title="Actualizar datos"
+                  >
+                    <RefreshIcon
+                      className={`transition-transform duration-700 ${loading ? "animate-spin" : "group-hover:rotate-180"}`}
+                    />
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedStudent(null)}
+                    disabled={loading}
+                    className={`flex items-center gap-2 px-8 py-4 bg-white border border-slate-200 rounded-2xl text-slate-500 font-black uppercase tracking-widest text-[10px] shadow-sm hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-[0.98] group ${isFullscreen ? "opacity-0 invisible w-0 p-0 overflow-hidden ml-0" : "opacity-100 visible"}`}
+                  >
+                    <div className="transition-transform group-hover:-translate-x-1">
+                      <ArrowLeftIcon />
+                    </div>
+                    Volver al Listado
+                  </button>
                 </div>
               </div>
 
               {/* Meal Services Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <MealCard
-                  type="desayuno"
-                  isActive={activeMeal === "desayuno"}
-                  isDone={
-                    activeMeal !== "desayuno" &&
-                    currentTime.getHours() >= MEAL_SCHEDULE.desayuno.end
-                  }
-                  onMark={handleRegisterMeal}
-                  isRegistered={todayLogs[selectedStudent.id]?.includes(
-                    MEAL_SCHEDULE.desayuno.label,
+              <div
+                className={`grid grid-cols-1 gap-6 ${
+                  selectedStudent.subscribedMeals.length === 1
+                    ? "max-w-md mx-auto"
+                    : selectedStudent.subscribedMeals.length === 2
+                      ? "md:grid-cols-2 max-w-4xl mx-auto"
+                      : "md:grid-cols-3"
+                }`}
+              >
+                {(Object.keys(MEAL_SCHEDULE) as MealType[])
+                  .filter((type) =>
+                    selectedStudent.subscribedMeals.includes(
+                      MEAL_SCHEDULE[type].label,
+                    ),
+                  )
+                  .map((type) => {
+                    const label = MEAL_SCHEDULE[type].label;
+                    const studentLogs = todayLogs[selectedStudent.id] || [];
+                    const isRegistered = studentLogs.some(
+                      (log) =>
+                        log.type === label && log.status === "Verificado",
+                    );
+                    const hasAviso = studentLogs.some(
+                      (log) => log.type === label && log.status === "Aviso",
+                    );
+
+                    return (
+                      <MealCard
+                        key={type}
+                        type={type}
+                        isActive={activeMeal === type}
+                        onMark={() => handleRegisterMeal(type, "Verificado")}
+                        onAviso={() => handleRegisterMeal(type, "Aviso")}
+                        isRegistered={isRegistered}
+                        hasAviso={hasAviso}
+                      />
+                    );
+                  })}
+              </div>
+
+              {/* Extras Section */}
+              <div className="mt-12 bg-white rounded-[2.5rem] p-8 border border-slate-200 shadow-sm max-w-4xl mx-auto">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="text-xl font-black text-slate-700 uppercase tracking-tight flex items-center gap-3">
+                    <span className="p-2 bg-amber-50 text-amber-500 rounded-lg">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </span>
+                    Consumos Extras
+                  </h3>
+                  {!isAddingExtra && (
+                    <button
+                      onClick={() => setIsAddingExtra(true)}
+                      className="px-6 py-4 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-amber-500/20 active:scale-95 flex items-center gap-2"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>{" "}
+                      Agregar Extra
+                    </button>
                   )}
-                />
-                <MealCard
-                  type="almuerzo"
-                  isActive={activeMeal === "almuerzo"}
-                  isDone={
-                    activeMeal !== "almuerzo" &&
-                    currentTime.getHours() >= MEAL_SCHEDULE.almuerzo.end
-                  }
-                  onMark={handleRegisterMeal}
-                  isRegistered={todayLogs[selectedStudent.id]?.includes(
-                    MEAL_SCHEDULE.almuerzo.label,
+                </div>
+
+                {/* Add Extra Form */}
+                {isAddingExtra && (
+                  <div className="bg-amber-50/50 p-6 rounded-3xl border border-amber-100 mb-8 animate-in slide-in-from-top-4 duration-300">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                          Producto
+                        </label>
+                        <input
+                          type="text"
+                          value={newExtraTitle}
+                          onChange={(e) => setNewExtraTitle(e.target.value)}
+                          placeholder="Ej. Gaseosa, Galleta..."
+                          className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 font-bold text-slate-700 outline-none transition-all placeholder:font-medium placeholder:text-slate-300"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                          Precio (S/)
+                        </label>
+                        <input
+                          type="number"
+                          value={newExtraPrice}
+                          onChange={(e) => setNewExtraPrice(e.target.value)}
+                          placeholder="0.00"
+                          step="0.10"
+                          className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 font-bold text-slate-700 outline-none transition-all placeholder:font-medium placeholder:text-slate-300"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={() => {
+                          setIsAddingExtra(false);
+                          setNewExtraTitle("");
+                          setNewExtraPrice("");
+                        }}
+                        className="px-6 py-3 bg-white border border-slate-200 text-slate-400 font-bold rounded-xl hover:bg-slate-50 transition-colors uppercase text-[10px] tracking-widest"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!newExtraTitle || !newExtraPrice) return;
+
+                          const title = newExtraTitle;
+                          const price = parseFloat(newExtraPrice);
+
+                          if (isNaN(price) || price <= 0) {
+                            alert("Precio inválido");
+                            return;
+                          }
+
+                          const tempId = Math.random().toString();
+                          const newExtra = {
+                            id: tempId,
+                            title,
+                            price,
+                          };
+
+                          setTodayExtras((prev) => ({
+                            ...prev,
+                            [selectedStudent.id]: [
+                              ...(prev[selectedStudent.id] || []),
+                              newExtra,
+                            ],
+                          }));
+
+                          setIsAddingExtra(false);
+                          setNewExtraTitle("");
+                          setNewExtraPrice("");
+
+                          const { data, error } = await supabase
+                            .from("student_extras")
+                            .insert({
+                              student_id: selectedStudent.id,
+                              title,
+                              price,
+                            })
+                            .select()
+                            .single();
+
+                          if (error) {
+                            console.error("Error saving extra:", error);
+                            alert("Error al guardar extra");
+                          } else {
+                            setTodayExtras((prev) => {
+                              const list = prev[selectedStudent.id] || [];
+                              return {
+                                ...prev,
+                                [selectedStudent.id]: list.map((e) =>
+                                  e.id === tempId ? { ...e, id: data.id } : e,
+                                ),
+                              };
+                            });
+
+                            setToastMessage(`Extra agregado: ${title}`);
+                            setShowToast(true);
+                            setTimeout(() => setShowToast(false), 3000);
+                          }
+                        }}
+                        disabled={!newExtraTitle || !newExtraPrice}
+                        className="px-8 py-3 bg-amber-500 text-white font-bold rounded-xl shadow-lg shadow-amber-500/20 hover:bg-amber-600 transition-all uppercase text-[10px] tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* List of Extras */}
+                <div className="space-y-3">
+                  {(todayExtras[selectedStudent.id] || []).length > 0 ? (
+                    (todayExtras[selectedStudent.id] || []).map((extra) => (
+                      <div
+                        key={extra.id}
+                        className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-amber-200 transition-colors"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center">
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="font-extrabold text-slate-700">
+                              {extra.title}
+                            </p>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                              Extra Kiosko
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-6">
+                          <span className="font-black text-slate-700 text-lg">
+                            S/ {extra.price.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 opacity-50">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                        Sin extras registrados hoy
+                      </p>
+                    </div>
                   )}
-                />
-                <MealCard
-                  type="cena"
-                  isActive={activeMeal === "cena"}
-                  isDone={
-                    activeMeal !== "cena" &&
-                    currentTime.getHours() >= MEAL_SCHEDULE.cena.end
-                  }
-                  onMark={handleRegisterMeal}
-                  isRegistered={todayLogs[selectedStudent.id]?.includes(
-                    MEAL_SCHEDULE.cena.label,
-                  )}
-                />
+                </div>
               </div>
             </div>
           )}
         </main>
-
-        {/* Profile Selection Bottom Bar */}
-        {selectedStudent && (
-          <div className="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 px-8 py-4 flex items-center justify-between z-40 lg:px-24 shadow-[0_-15px_30px_rgba(0,0,0,0.05)] animate-in slide-in-from-bottom duration-300">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 border border-slate-100 shrink-0 shadow-sm">
-                <UserIconSmall />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">
-                  Terminal Activa
-                </p>
-                <p className="text-sm font-black text-slate-700 tracking-tight">
-                  {selectedStudent.firstName} {selectedStudent.lastName}
-                </p>
-              </div>
-            </div>
-
-            {/* Extras Toggle and Notes (Only for Lunch) */}
-            {activeMeal === "almuerzo" && (
-              <div className="flex-1 max-w-2xl mx-8 flex items-center gap-6 animate-in fade-in slide-in-from-left-4 duration-500">
-                <div className="flex items-center gap-3 bg-slate-50 border border-slate-100 px-4 py-2 rounded-2xl shrink-0">
-                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                    ¿Ración Extra?
-                  </span>
-                  <button
-                    onClick={() => {
-                      setHasExtra(!hasExtra);
-                      if (!hasExtra) setExtraNotes(""); // Reset on enable
-                    }}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${hasExtra ? "bg-[#1ABB9C]" : "bg-slate-200"}`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${hasExtra ? "translate-x-6" : "translate-x-1"}`}
-                    />
-                  </button>
-                </div>
-
-                {hasExtra && (
-                  <div className="flex-1 flex gap-2 animate-in zoom-in-95 duration-300">
-                    {["Doble plato", "Presa", "Doble entrada"].map((option) => (
-                      <button
-                        key={option}
-                        onClick={() => setExtraNotes(option)}
-                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border shadow-sm ${
-                          extraNotes === option
-                            ? "bg-[#1ABB9C] text-white border-transparent"
-                            : "bg-white text-slate-400 border-slate-200 hover:border-[#1ABB9C]/30 hover:text-[#1ABB9C]"
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setSelectedStudent(null)}
-                className="px-6 py-2.5 rounded-xl text-slate-500 font-bold hover:text-slate-700 hover:bg-slate-50 transition-all uppercase tracking-widest text-[10px]"
-              >
-                Cerrar
-              </button>
-              <button
-                onClick={handleRegisterMeal}
-                disabled={
-                  !activeMeal ||
-                  loading ||
-                  todayLogs[selectedStudent.id]?.includes(
-                    MEAL_SCHEDULE[activeMeal].label,
-                  )
-                }
-                className={`px-8 py-3 rounded-xl font-black shadow-lg transition-all uppercase tracking-widest text-xs flex items-center gap-2 disabled:shadow-none ${
-                  todayLogs[selectedStudent.id]?.includes(
-                    activeMeal ? MEAL_SCHEDULE[activeMeal].label : "",
-                  )
-                    ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                    : "bg-[#1ABB9C] text-white shadow-[#1ABB9C]/20 hover:bg-emerald-600"
-                }`}
-              >
-                {loading ? (
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
-                ) : todayLogs[selectedStudent.id]?.includes(
-                    activeMeal ? MEAL_SCHEDULE[activeMeal].label : "",
-                  ) ? (
-                  <CheckIconCircle size={16} />
-                ) : (
-                  <CheckIconSmallNav />
-                )}
-                {loading
-                  ? "Registrando..."
-                  : todayLogs[selectedStudent.id]?.includes(
-                        activeMeal ? MEAL_SCHEDULE[activeMeal].label : "",
-                      )
-                    ? "Ya Registrado"
-                    : `Confirmar ${activeMeal && MEAL_SCHEDULE[activeMeal].label}`}
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Background layer closing tag */}
       </div>
 
@@ -618,14 +911,16 @@ export default function KioskPage() {
                 </svg>
               </div>
               <h1 className="text-[#0d1b19] text-3xl font-extrabold leading-tight tracking-tight mb-3 uppercase">
-                ¡Registro Confirmado!
+                {lastAction.status === "Aviso"
+                  ? "¡Cargo Anulado!"
+                  : "¡Consumo Confirmado!"}
               </h1>
               <p className="text-slate-500 text-lg font-medium mb-10">
-                Tu{" "}
+                El estado de tu{" "}
                 <span className="text-[#13ecc8] font-bold">
                   {lastAction.meal}
                 </span>{" "}
-                ha sido registrado con éxito.
+                ha sido actualizado.
               </p>
               <div className="bg-slate-50 w-full py-5 px-6 rounded-2xl border border-slate-100 shadow-inner">
                 <p className="text-[#13ecc8] text-xl font-black italic">
@@ -669,14 +964,8 @@ export default function KioskPage() {
                 <div
                   className="h-full bg-[#13ecc8] rounded-full transition-all duration-1000 ease-linear shadow-[0_0_10px_rgba(19,236,200,0.5)]"
                   style={{ width: `${(countdown / 3) * 100}%` }}
-                ></div>
+                />
               </div>
-            </div>
-
-            <div className="bg-slate-50/50 py-4 text-center border-t border-slate-100">
-              <p className="text-slate-400 text-[9px] font-bold uppercase tracking-widest">
-                Terminal de Registro #024 • Gestión de Pensionistas
-              </p>
             </div>
           </div>
         </div>
@@ -685,97 +974,144 @@ export default function KioskPage() {
   );
 }
 
+// ... (icons)
+
 function MealCard({
   type,
   isActive,
-  isDone,
-  isRegistered,
   onMark,
+  onAviso,
+  isRegistered,
+  hasAviso,
 }: {
   type: MealType;
   isActive: boolean;
-  isDone: boolean;
-  isRegistered?: boolean;
   onMark: () => void;
+  onAviso: () => void;
+  isRegistered: boolean;
+  hasAviso: boolean;
 }) {
   const schedule = MEAL_SCHEDULE[type];
-
-  if (isRegistered) {
-    return (
-      <div className="bg-white border border-emerald-100 rounded-[2.5rem] p-8 flex flex-col items-center shadow-[0_20px_60px_rgba(26,187,156,0.1)] relative overflow-hidden group border-b-[8px] border-b-[#1ABB9C]">
-        <div className="absolute top-4 right-4 text-[#1ABB9C] animate-in zoom-in duration-500">
-          <CheckIconCircle size={24} />
-        </div>
-        <div className="w-16 h-16 rounded-[1.5rem] bg-[#1ABB9C] flex items-center justify-center text-white mb-5 shadow-lg shadow-[#1ABB9C]/30 transition-transform group-hover:scale-110">
-          <MealIcon type={type} />
-        </div>
-        <h3 className="text-xl font-black text-[#2A3F54] mb-1 uppercase tracking-tight">
-          {schedule.label}
-        </h3>
-        <p className="text-[10px] font-black text-[#1ABB9C] mb-6 uppercase tracking-[0.3em] bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
-          VERIFICADO HOY
-        </p>
-        <div className="w-full mt-auto">
-          <div className="w-full bg-slate-50 border border-slate-100 text-slate-400 font-black py-4 rounded-2xl flex items-center justify-center gap-3 text-xs uppercase tracking-widest cursor-not-allowed">
-            SERVICIO COMPLETADO
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (isActive) {
-    return (
-      <div className="bg-white border-2 border-[#1ABB9C] rounded-[2.5rem] p-8 flex flex-col items-center shadow-[0_32px_80px_-16px_rgba(26,187,156,0.2)] relative z-10 transition-all hover:translate-y-[-4px] border-b-[8px] border-b-[#1ABB9C]">
-        <div className="absolute -top-3 bg-gradient-to-r from-[#1ABB9C] to-[#16a085] text-white text-[10px] font-black px-6 py-1.5 rounded-full tracking-[0.2em] uppercase shadow-lg">
-          Servicio Activo
-        </div>
-        <div className="w-16 h-16 rounded-[1.5rem] bg-[#1ABB9C]/10 flex items-center justify-center text-[#1ABB9C] mb-5 group-hover:scale-110 transition-transform">
-          <MealIcon type={type} />
-        </div>
-        <h3 className="text-xl font-black text-[#2A3F54] mb-1 uppercase tracking-tight">
-          {schedule.label}
-        </h3>
-        <p className="text-[10px] font-black text-[#1ABB9C] mb-8 uppercase tracking-[0.2em]">
-          {schedule.time}
-        </p>
-        <div className="w-full mt-auto">
-          <button
-            onClick={onMark}
-            className="w-full bg-[#1ABB9C] hover:bg-[#16a085] text-white font-black py-4 rounded-[1.2rem] flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-xl shadow-[#1ABB9C]/30 group inline-flex"
-          >
-            <CheckIconCircle
-              size={20}
-              className="transition-transform group-hover:scale-125"
-            />
-            <span className="tracking-[0.1em] text-xs uppercase">
-              MARCAR ASISTENCIA
-            </span>
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const isSuccess = isRegistered && !hasAviso;
+  const isAviso = hasAviso;
 
   return (
     <div
-      className={`bg-white/50 border border-slate-200 rounded-[2.5rem] p-8 flex flex-col items-center transition-all ${isDone ? "grayscale-[0.8] opacity-50" : "opacity-70"}`}
+      className={`bg-white border rounded-[3rem] p-8 flex flex-col items-center shadow-[0_15px_60px_-15px_rgba(42,63,84,0.1)] relative overflow-hidden group transition-all duration-500 hover:translate-y-[-4px] hover:shadow-[0_30px_70px_-15px_rgba(42,63,84,0.15)] ${
+        isSuccess
+          ? "border-emerald-100/50"
+          : isAviso
+            ? "border-amber-100/50"
+            : "border-slate-100"
+      }`}
     >
-      <div className="w-14 h-14 rounded-[1.2rem] bg-slate-100 flex items-center justify-center text-slate-300 mb-5 border border-slate-200 shadow-inner">
-        <MealIcon type={type} inactive />
+      {/* Background Decorative Gradient */}
+      <div
+        className={`absolute inset-x-0 bottom-0 h-2 transition-all duration-500 ${
+          isSuccess
+            ? "bg-gradient-to-r from-[#1ABB9C] to-[#0D8E75]"
+            : isAviso
+              ? "bg-gradient-to-r from-amber-400 to-orange-500"
+              : "bg-slate-200"
+        }`}
+      ></div>
+
+      {/* Active Header Badge */}
+      {isActive && !isSuccess && !isAviso && (
+        <div className="absolute top-0 inset-x-0 flex justify-center">
+          <div className="bg-gradient-to-r from-[#1ABB9C] to-[#16a085] text-white text-[9px] font-black px-8 py-2 rounded-b-2xl tracking-[0.25em] uppercase shadow-lg z-20 animate-in slide-in-from-top-2">
+            Servicio Abierto
+          </div>
+        </div>
+      )}
+
+      {/* Status Icons */}
+      <div className="absolute top-6 right-6 flex items-center gap-2">
+        {isSuccess && (
+          <div className="p-1.5 bg-emerald-50 rounded-full text-[#1ABB9C] border border-emerald-100 animate-in zoom-in-50 duration-500">
+            <CheckIconCircle size={18} />
+          </div>
+        )}
+        {isAviso && (
+          <div className="p-1.5 bg-amber-50 rounded-full text-amber-500 border border-amber-100 animate-in zoom-in-50 duration-500">
+            <ClockHistoryIcon size={18} />
+          </div>
+        )}
       </div>
-      <h3 className="text-lg font-black text-slate-500 mb-1 uppercase tracking-tight">
+
+      {/* Icon Area */}
+      <div className="relative mt-4 mb-6">
+        <div
+          className={`w-20 h-20 rounded-[2rem] flex items-center justify-center transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${
+            isSuccess
+              ? "bg-gradient-to-br from-[#1ABB9C] to-[#0D8E75] text-white shadow-xl shadow-[#1ABB9C]/30"
+              : isAviso
+                ? "bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-xl shadow-amber-500/30"
+                : "bg-slate-50 text-slate-400 border border-slate-100"
+          }`}
+        >
+          <MealIcon type={type} inactive={!isSuccess && !isAviso} />
+        </div>
+        {isActive && !isSuccess && !isAviso && (
+          <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-emerald-500 border-4 border-white rounded-full animate-pulse shadow-md"></div>
+        )}
+      </div>
+
+      <h3 className="text-xl font-black text-[#2A3F54] mb-2 uppercase tracking-tight">
         {schedule.label}
       </h3>
-      <p className="text-[9px] font-black text-slate-400 mb-6 uppercase tracking-widest">
-        {schedule.time}
-      </p>
+
+      {/* Modern Status Badge */}
+      <div
+        className={`text-[9px] font-black mb-8 uppercase tracking-[0.25em] px-4 py-1.5 rounded-xl border transition-all duration-500 ${
+          isSuccess
+            ? "text-[#1ABB9C] bg-emerald-50 border-emerald-100/50"
+            : isAviso
+              ? "text-amber-600 bg-amber-50 border-amber-100/50"
+              : "text-slate-400 bg-slate-50 border-slate-100"
+        }`}
+      >
+        {isSuccess
+          ? "Consumo Confirmado"
+          : isAviso
+            ? "Cobro Anulado"
+            : "No Registrado"}
+      </div>
+
+      {/* Action Section */}
       <div className="w-full mt-auto">
-        <div className="flex items-center gap-2 text-slate-400 bg-slate-100 px-4 py-3 rounded-xl w-full justify-center border border-slate-200 shadow-inner">
-          <span className="text-[9px] font-black tracking-[0.2em] uppercase">
-            {isDone ? "SERVICIO CERRADO" : "PRÓXIMAMENTE"}
-          </span>
-        </div>
+        {!isAviso ? (
+          <div className="space-y-4">
+            <button
+              onClick={onAviso}
+              className={`w-full font-black py-4 px-6 rounded-2xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] uppercase tracking-widest text-[10px] shadow-sm border ${
+                isSuccess
+                  ? "bg-white text-amber-500 border-amber-100 hover:bg-amber-50 hover:border-amber-200"
+                  : "bg-amber-500 text-white border-amber-400 hover:bg-amber-600 shadow-amber-500/10"
+              }`}
+            >
+              <ClockHistoryIcon size={16} />
+              <span>{isSuccess ? "Cambiar a Aviso" : "Anular Cobro"}</span>
+            </button>
+            {isSuccess && (
+              <div className="flex items-center justify-center gap-2 text-emerald-500">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-80">
+                  Servicio Guardado
+                </span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="w-full bg-slate-50 border border-slate-100 text-slate-400 font-black py-4 rounded-2xl flex flex-col items-center justify-center gap-1">
+            <span className="text-[10px] uppercase tracking-widest">
+              Gesto Cancelado
+            </span>
+            <span className="text-[8px] opacity-60 tracking-[0.2em]">
+              Sincronizado Hoy
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -788,13 +1124,7 @@ const MealIcon = ({
   type: MealType;
   inactive?: boolean;
 }) => {
-  const color = inactive
-    ? "currentColor"
-    : type === "desayuno"
-      ? "#EAB308"
-      : type === "almuerzo"
-        ? "#1ABB9C"
-        : "#8B5CF6";
+  const color = inactive ? "currentColor" : "white"; // Now white because they will be used inside gradient backgrounds when active
 
   if (type === "desayuno")
     return (
@@ -904,23 +1234,25 @@ const SearchIconLarge = () => (
   </svg>
 );
 
-const CheckIconCircle = ({ size = 20, className = "" }) => (
-  <svg
-    className={className}
-    xmlns="http://www.w3.org/2000/svg"
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="4"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="m22 11.08V12a10 10 0 1 1-5.93-9.14" />
-    <polyline points="22 4 12 14.01 9 11.01" />
-  </svg>
-);
+function CheckIconCircle({ size = 20, className = "" }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  );
+}
 
 const VerifiedIcon = () => (
   <svg
@@ -974,22 +1306,24 @@ const CalendarTodayIcon = () => (
   </svg>
 );
 
-const ClockHistoryIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="12" cy="12" r="10" />
-    <polyline points="12 6 12 12 16 14" />
-  </svg>
-);
+function ClockHistoryIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
 
 const LockClockIcon = () => (
   <svg
@@ -1072,5 +1406,83 @@ const CheckIconLarge = ({ color }: { color: string }) => (
     strokeLinejoin="round"
   >
     <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
+
+const StarIcon = ({ size = 20 }: { size?: number }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+  </svg>
+);
+
+const PlusIcon = ({ size = 20 }: { size?: number }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <line x1="12" y1="5" x2="12" y2="19" />
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </svg>
+);
+
+const TrashIcon = ({ size = 20 }: { size?: number }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <line x1="10" y1="11" x2="10" y2="17" />
+    <line x1="14" y1="11" x2="14" y2="17" />
+  </svg>
+);
+
+const RefreshIcon = ({
+  size = 20,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+    <path d="M21 3v5h-5" />
+    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+    <path d="M8 16H3v5" />
   </svg>
 );

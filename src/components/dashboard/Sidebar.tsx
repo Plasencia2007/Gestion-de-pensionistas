@@ -118,6 +118,26 @@ const KioskIcon = () => (
   </svg>
 );
 
+const AttendanceIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M8 2v4" />
+    <path d="M16 2v4" />
+    <rect width="18" height="18" x="3" y="4" rx="2" />
+    <path d="M3 10h18" />
+    <path d="m9 16 2 2 4-4" />
+  </svg>
+);
+
 const UserIconSmall = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -157,8 +177,21 @@ const LogoutIcon = () => (
 const MENU_ITEMS = [
   { label: "Dashboard", href: "/dashboard", icon: <DashboardIcon /> },
   { label: "Estudiantes", href: "/dashboard/students", icon: <UsersIcon /> },
-  { label: "Planes", href: "/dashboard/plans", icon: <PlansIcon /> },
-  { label: "Reportes", href: "/dashboard/reports", icon: <ReportsIcon /> },
+  {
+    label: "Asistencias",
+    href: "/dashboard/wip?feature=Asistencias",
+    icon: <AttendanceIcon />,
+  },
+  {
+    label: "Planes",
+    href: "/dashboard/wip?feature=Planes",
+    icon: <PlansIcon />,
+  },
+  {
+    label: "Reportes",
+    href: "/dashboard/wip?feature=Reportes",
+    icon: <ReportsIcon />,
+  },
   {
     label: "Configuración",
     href: "/dashboard/settings",
@@ -189,8 +222,12 @@ export default function Sidebar({ collapsed }: { collapsed: boolean }) {
       `}
       >
         <div className="relative shrink-0">
-          <div className="w-10 h-10 rounded-xl bg-[#3E4F5F] border border-[#4F5F6F] flex items-center justify-center text-lg text-slate-300 shadow-inner">
-            <UserIconSmall />
+          <div className="w-10 h-10 rounded-xl bg-white border border-[#4F5F6F] overflow-hidden shadow-inner">
+            <img
+              src="/logo.png"
+              alt="Avatar"
+              className="w-full h-full object-cover"
+            />
           </div>
           <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#1ABB9C] border-2 border-[#2A3F54] rounded-full"></div>
         </div>
@@ -198,9 +235,7 @@ export default function Sidebar({ collapsed }: { collapsed: boolean }) {
           <p className="text-[10px] text-[#ADB2B7] font-bold uppercase tracking-wider leading-none mb-1">
             Bienvenido,
           </p>
-          <p className="text-xs font-bold text-white truncate w-28">
-            Restaurante Central
-          </p>
+          <p className="text-xs font-bold text-white truncate w-28">RIQUITO</p>
         </div>
       </div>
 

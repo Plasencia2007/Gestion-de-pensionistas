@@ -8,32 +8,27 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import Portal from "@/src/components/ui/Portal";
 import { supabase } from "@/src/lib/supabase";
+import Toast from "@/src/components/ui/Toast";
 
 const studentSchema = z.object({
   firstName: z.string().min(2, "El nombre es requerido"),
   lastName: z.string().min(2, "Los apellidos son requeridos"),
-  dni: z
-    .string()
-    .length(8, "El DNI debe tener exactamente 8 dígitos")
-    .regex(/^\d+$/, "Solo números"),
-  email: z.string().email("Correo electrónico inválido"),
-  phone: z
-    .string()
-    .length(9, "Debe tener 9 dígitos")
-    .regex(/^9\d*$/, "Debe empezar con 9 y solo números"),
-  address: z.string().min(5, "La dirección es demasiado corta"),
-  birthDate: z
-    .string()
-    .min(1, "Requerido")
-    .refine((val) => {
-      const year = parseInt(val.split("-")[0]);
-      return year > 1940 && year <= new Date().getFullYear();
-    }, "Año no válido"),
   code: z
     .string()
     .length(9, "El código debe tener 9 dígitos")
     .regex(/^\d+$/, "Solo números"),
-  notes: z.string().optional(),
+  career: z.string().min(3, "La carrera es requerida"),
+  phone: z
+    .string()
+    .length(9, "Debe tener 9 dígitos")
+    .regex(/^9\d*$/, "Debe empezar con 9"),
+  parentPhone: z
+    .string()
+    .length(9, "Debe tener 9 dígitos")
+    .regex(/^9\d*$/, "Debe empezar con 9")
+    .optional()
+    .or(z.literal("")),
+  subscribedMeals: z.array(z.string()).min(1, "Selecciona al menos una comida"),
   active: z.boolean(),
 });
 
@@ -42,6 +37,15 @@ type StudentFormData = z.infer<typeof studentSchema>;
 export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<{
+    isOpen: boolean;
+    message: string;
+    type: "success" | "error" | "info" | "warning";
+  }>({
+    isOpen: false,
+    message: "",
+    type: "info",
+  });
 
   const fetchStudents = useCallback(async () => {
     setLoading(true);
@@ -53,20 +57,21 @@ export default function StudentsPage() {
     if (error) {
       console.error("Error fetching students:", error);
     } else {
-      // Map database snake_case to frontend camelCase if necessary,
-      // but assuming the table uses camelCase or mapping is handled here
       const mappedStudents: Student[] = (data || []).map((s: any) => ({
         id: s.id,
         firstName: s.first_name,
         lastName: s.last_name,
         code: s.code,
-        dni: s.dni,
-        email: s.email,
-        phone: s.phone,
-        address: s.address,
-        birthDate: s.birth_date,
-        joinedDate: s.joined_date,
-        notes: s.notes,
+        dni: s.dni || "",
+        email: s.email || "",
+        phone: s.phone || "",
+        parentPhone: s.parent_phone || "",
+        address: s.address || "",
+        birthDate: s.birth_date || "",
+        career: s.career || "",
+        joinedDate: s.created_at || new Date().toISOString(),
+        subscribedMeals: s.subscribed_meals || [],
+        notes: s.notes || "",
         active: s.active,
         avatar: s.avatar_url,
       }));
@@ -84,7 +89,6 @@ export default function StudentsPage() {
     "all" | "active" | "inactive"
   >("all");
 
-  // Modal states
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -100,7 +104,7 @@ export default function StudentsPage() {
     const matchesSearch =
       fullName.includes(searchTerm.toLowerCase()) ||
       student.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.dni.includes(searchTerm);
+      student.career.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesStatus =
       filterStatus === "all"
@@ -123,13 +127,11 @@ export default function StudentsPage() {
     defaultValues: {
       firstName: "",
       lastName: "",
-      dni: "",
-      email: "",
-      phone: "",
-      address: "",
-      birthDate: "",
       code: "",
-      notes: "",
+      career: "",
+      phone: "",
+      parentPhone: "",
+      subscribedMeals: [],
       active: true,
     },
   });
@@ -142,17 +144,14 @@ export default function StudentsPage() {
   const handleOpenEdit = (student: Student) => {
     setSelectedStudent(student);
     setModalMode("edit");
-    // Populate form with student data
     reset({
       firstName: student.firstName,
       lastName: student.lastName,
-      dni: student.dni,
-      email: student.email,
-      phone: student.phone,
-      address: student.address,
-      birthDate: student.birthDate,
       code: student.code,
-      notes: student.notes || "",
+      career: student.career,
+      phone: student.phone,
+      parentPhone: student.parentPhone,
+      subscribedMeals: student.subscribedMeals,
       active: student.active,
     });
     setIsFormModalOpen(true);
@@ -164,13 +163,11 @@ export default function StudentsPage() {
     reset({
       firstName: "",
       lastName: "",
-      dni: "",
-      email: "",
-      phone: "",
-      address: "",
-      birthDate: "",
       code: "",
-      notes: "",
+      career: "",
+      phone: "",
+      parentPhone: "",
+      subscribedMeals: [],
       active: true,
     });
     setIsFormModalOpen(true);
@@ -182,13 +179,11 @@ export default function StudentsPage() {
       const dbData = {
         first_name: data.firstName,
         last_name: data.lastName,
-        dni: data.dni,
-        email: data.email,
-        phone: data.phone,
-        address: data.address,
-        birth_date: data.birthDate,
         code: data.code,
-        notes: data.notes,
+        career: data.career,
+        phone: data.phone,
+        parent_phone: data.parentPhone,
+        subscribed_meals: data.subscribedMeals,
         active: data.active,
       };
 
@@ -256,6 +251,14 @@ export default function StudentsPage() {
 
   return (
     <div className="space-y-8 animate-in fade-in slide-up duration-500 pb-20">
+      {/* Toast Notification */}
+      <Toast
+        isOpen={toast.isOpen}
+        message={toast.message}
+        type={toast.type}
+        onClose={() => setToast((prev) => ({ ...prev, isOpen: false }))}
+      />
+
       {/* Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
@@ -271,7 +274,16 @@ export default function StudentsPage() {
           </p>
         </div>
         <div className="flex space-x-3 w-full md:w-auto">
-          <button className="flex-1 md:flex-none border border-slate-200 bg-white text-slate-600 px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 shadow-sm">
+          <button
+            onClick={() =>
+              setToast({
+                isOpen: true,
+                message: "Función en desarrollo (Próximamente)",
+                type: "info",
+              })
+            }
+            className="flex-1 md:flex-none border border-slate-200 bg-white text-slate-600 px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 shadow-sm"
+          >
             <ExportIcon /> Exportar
           </button>
           <button
@@ -296,26 +308,6 @@ export default function StudentsPage() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
-        </div>
-        <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-100 min-w-fit">
-          <button
-            onClick={() => setFilterStatus("all")}
-            className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg transition-all ${filterStatus === "all" ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
-          >
-            Todos
-          </button>
-          <button
-            onClick={() => setFilterStatus("active")}
-            className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg transition-all ${filterStatus === "active" ? "bg-white text-[#1ABB9C] shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
-          >
-            Activos
-          </button>
-          <button
-            onClick={() => setFilterStatus("inactive")}
-            className={`px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg transition-all ${filterStatus === "inactive" ? "bg-white text-rose-500 shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
-          >
-            Inactivos
-          </button>
         </div>
       </div>
 
@@ -360,14 +352,14 @@ export default function StudentsPage() {
                             {student.firstName} {student.lastName}
                           </p>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-                            {student.email}
+                            Carrera: {student.career}
                           </p>
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-xs font-bold text-slate-600">
-                        DNI: {student.dni}
+                        {student.phone}
                       </span>
                     </td>
                     <td className="px-6 py-4">
@@ -434,9 +426,6 @@ export default function StudentsPage() {
         </div>
       </div>
 
-      {/* --- MODALS --- */}
-
-      {/* View Modal */}
       {isViewModalOpen && selectedStudent && (
         <Portal>
           <div
@@ -446,7 +435,6 @@ export default function StudentsPage() {
             }}
           >
             <div className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.5)] overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col md:flex-row max-h-[90vh] cursor-default">
-              {/* Sidebar / Profile Summary */}
               <div className="md:w-72 bg-[#2A3F54] p-8 text-white flex flex-col items-center shrink-0">
                 <div className="relative group">
                   <div className="w-28 h-28 rounded-3xl bg-[#1ABB9C] border-4 border-white/10 flex items-center justify-center text-4xl font-black text-white shadow-2xl transition-transform group-hover:scale-105 duration-500">
@@ -478,7 +466,6 @@ export default function StudentsPage() {
                 </div>
               </div>
 
-              {/* Main Content Areas */}
               <div className="flex-1 flex flex-col min-h-0 bg-slate-50/50">
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
@@ -493,7 +480,6 @@ export default function StudentsPage() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-8 space-y-10">
-                  {/* Personal Section */}
                   <section>
                     <h4 className="text-[10px] font-black text-[#1ABB9C] uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
                       <span className="w-8 h-px bg-[#1ABB9C]/20"></span>{" "}
@@ -501,29 +487,40 @@ export default function StudentsPage() {
                     </h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                       <InfoGroup
-                        label="Núm. Documento (DNI)"
-                        value={selectedStudent.dni}
+                        label="Carrera Profesional"
+                        value={selectedStudent.career || "No especificada"}
                         icon={<BadgeIcon />}
                       />
                       <InfoGroup
+                        label="Teléfono del Apoderado"
+                        value={selectedStudent.parentPhone || "No registrado"}
+                        icon={<PhoneIcon />}
+                      />
+                      <InfoGroup
+                        label="Correo Electrónico"
+                        value={selectedStudent.email || "No registrado"}
+                        icon={<MailIcon />}
+                        canCopy
+                      />
+                      <InfoGroup
+                        label="Documento de Identidad (DNI)"
+                        value={selectedStudent.dni || "No registrado"}
+                        icon={<LockIcon />}
+                        canCopy
+                      />
+                      <InfoGroup
+                        label="Dirección de Residencia"
+                        value={selectedStudent.address || "No registrada"}
+                        icon={<MapIcon />}
+                      />
+                      <InfoGroup
                         label="Fecha de Nacimiento"
-                        value={selectedStudent.birthDate}
+                        value={selectedStudent.birthDate || "No registrada"}
                         icon={<CalendarIcon />}
-                      />
-                      <InfoGroup
-                        label="Fecha de Ingreso"
-                        value={selectedStudent.joinedDate}
-                        icon={<CalendarIcon />}
-                      />
-                      <InfoGroup
-                        label="Matrícula"
-                        value={selectedStudent.code}
-                        icon={<UsersIcon />}
                       />
                     </div>
                   </section>
 
-                  {/* Contact Section */}
                   <section>
                     <h4 className="text-[10px] font-black text-[#1ABB9C] uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
                       <span className="w-8 h-px bg-[#1ABB9C]/20"></span> Datos
@@ -531,40 +528,36 @@ export default function StudentsPage() {
                     </h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                       <InfoGroup
-                        label="Correo Institucional"
-                        value={selectedStudent.email}
+                        label="Plan de Comidas"
+                        value={
+                          selectedStudent.subscribedMeals.join(", ") ||
+                          "Ninguno"
+                        }
                         icon={<MailIcon />}
-                        canCopy
-                      />
-                      <InfoGroup
-                        label="Teléfono de Contacto"
-                        value={selectedStudent.phone}
-                        icon={<PhoneIcon />}
-                        canCopy
                       />
                       <div className="sm:col-span-2">
                         <InfoGroup
-                          label="Dirección de Residencia"
-                          value={selectedStudent.address}
-                          icon={<MapIcon />}
+                          label="Teléfono Personal"
+                          value={selectedStudent.phone}
+                          icon={<PhoneIcon />}
+                          canCopy
                         />
                       </div>
                     </div>
                   </section>
 
-                  {/* Medical Section */}
                   <section>
                     <h4 className="text-[10px] font-black text-[#1ABB9C] uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
-                      <span className="w-8 h-px bg-[#1ABB9C]/20"></span>{" "}
-                      Observaciones Clínicas
+                      <span className="w-8 h-px bg-[#1ABB9C]/20"></span> Resumen
+                      de Servicios
                     </h4>
                     <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm relative overflow-hidden">
                       <div className="absolute top-0 left-0 w-1.5 h-full bg-[#1ABB9C]"></div>
                       <p className="text-sm text-slate-600 font-medium leading-relaxed italic">
-                        "
-                        {selectedStudent.notes ||
-                          "No se han registrado observaciones especiales o restricciones alimentarias para este pensionista."}
-                        "
+                        "Este estudiante tiene acceso a los servicios de:{" "}
+                        {selectedStudent.subscribedMeals.join(", ") ||
+                          "Ninguno"}
+                        ."
                       </p>
                     </div>
                   </section>
@@ -584,7 +577,6 @@ export default function StudentsPage() {
         </Portal>
       )}
 
-      {/* Form Modal (Add / Edit) */}
       {isFormModalOpen && (
         <Portal>
           <div
@@ -620,7 +612,6 @@ export default function StudentsPage() {
               </div>
 
               <div className="p-8 overflow-y-auto space-y-10 custom-scrollbar">
-                {/* Form Section: Core Info */}
                 <div className="space-y-6">
                   <FormSectionHeader
                     title="Datos Generales"
@@ -642,18 +633,11 @@ export default function StudentsPage() {
                       error={errors.lastName?.message}
                     />
                     <FormHookInput
-                      label="Número de DNI"
+                      label="Carrera Profesional"
                       icon={<BadgeIcon />}
-                      placeholder="8 números"
-                      register={register("dni")}
-                      error={errors.dni?.message}
-                    />
-                    <FormHookInput
-                      label="Fecha de Nacimiento"
-                      icon={<CalendarIcon />}
-                      type="date"
-                      register={register("birthDate")}
-                      error={errors.birthDate?.message}
+                      placeholder="Ej. Ingeniería de Sistemas"
+                      register={register("career")}
+                      error={errors.career?.message}
                     />
                     <FormHookInput
                       label="Código de Matrícula"
@@ -674,48 +658,55 @@ export default function StudentsPage() {
                   />
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <FormHookInput
-                      label="Correo Institucional"
-                      icon={<MailIcon />}
-                      placeholder="ejemplo@universidad.edu"
-                      register={register("email")}
-                      error={errors.email?.message}
-                    />
-                    <FormHookInput
-                      label="Número de Celular"
+                      label="Celular del Estudiante"
                       icon={<PhoneIcon />}
                       placeholder="900 000 000"
                       register={register("phone")}
                       error={errors.phone?.message}
                     />
-                    <div className="md:col-span-2">
-                      <FormHookInput
-                        label="Dirección de Residencia"
-                        icon={<MapIcon />}
-                        placeholder="Avenida, Urbanización, Distrito..."
-                        register={register("address")}
-                        error={errors.address?.message}
-                      />
-                    </div>
+                    <FormHookInput
+                      label="Celular del Apoderado"
+                      icon={<PhoneIcon />}
+                      placeholder="900 000 000"
+                      register={register("parentPhone")}
+                      error={errors.parentPhone?.message}
+                    />
                   </div>
                 </div>
 
-                {/* Form Section: Notes */}
                 <div className="space-y-6">
                   <FormSectionHeader
-                    title="Estado y Observaciones"
-                    icon={<EditIcon />}
+                    title="Plan de Pensión y Comidas"
+                    icon={<LockIcon />}
                   />
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                        <EditIcon size={12} /> Comentarios Adicionales o Dietas
+                  <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                    <div className="space-y-4">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        Servicios Incluidos
                       </label>
-                      <textarea
-                        {...register("notes")}
-                        rows={4}
-                        className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-[#1ABB9C]/10 focus:border-[#1ABB9C] outline-none transition-all font-medium text-slate-700 text-sm placeholder:text-slate-400 placeholder:italic"
-                        placeholder="Indique si el estudiante tiene alergias, es vegetariano, o requiere trato especial..."
-                      ></textarea>
+                      <div className="flex flex-wrap gap-2">
+                        {["Desayuno", "Almuerzo", "Cena"].map((meal) => (
+                          <label
+                            key={meal}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 transition-all cursor-pointer hover:border-[#1ABB9C]/30 bg-white"
+                          >
+                            <input
+                              type="checkbox"
+                              value={meal}
+                              {...register("subscribedMeals")}
+                              className="w-4 h-4 rounded border-slate-300 text-[#1ABB9C] focus:ring-[#1ABB9C]/20"
+                            />
+                            <span className="text-xs font-bold text-slate-600 uppercase tracking-tighter">
+                              {meal}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      {errors.subscribedMeals && (
+                        <p className="text-[10px] text-rose-500 font-bold ml-1 uppercase">
+                          {errors.subscribedMeals.message}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -990,7 +981,7 @@ function FormInput({
 }
 
 // Icons
-const UsersIcon = () => (
+export const UsersIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width="20"
@@ -1009,7 +1000,7 @@ const UsersIcon = () => (
   </svg>
 );
 
-const SearchIcon = ({ size = 18 }: { size?: number }) => (
+export const SearchIcon = ({ size = 18 }: { size?: number }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
@@ -1129,7 +1120,13 @@ const LockIcon = ({ size = 14 }: { size?: number }) => (
   </svg>
 );
 
-const CheckIconCircle = ({ size = 16 }: { size?: number }) => (
+export const CheckIconCircle = ({
+  size = 16,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
@@ -1140,6 +1137,7 @@ const CheckIconCircle = ({ size = 16 }: { size?: number }) => (
     strokeWidth="3"
     strokeLinecap="round"
     strokeLinejoin="round"
+    className={className}
   >
     <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
     <polyline points="22 4 12 14.01 9 11.01" />

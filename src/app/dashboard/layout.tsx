@@ -23,12 +23,16 @@ export default function DashboardLayout({
           <div
             className={`flex items-center transition-all duration-300 ${isCollapsed ? "w-[70px] justify-center" : "w-[214px]"}`}
           >
-            <div className="w-8 h-8 rounded-lg bg-[#1ABB9C] flex items-center justify-center text-white font-black text-xs mr-3 shadow-lg shadow-[#1ABB9C]/40 shrink-0">
-              PA
+            <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center mr-3 shadow-lg shadow-black/10 shrink-0 overflow-hidden">
+              <img
+                src="/logo.png"
+                alt="Logo"
+                className="w-full h-full object-cover"
+              />
             </div>
             {!isCollapsed && (
               <h2 className="text-sm font-extrabold text-white tracking-tight whitespace-nowrap overflow-hidden">
-                PENSION <span className="text-[#1ABB9C]">ADMIN</span>
+                RIQUITO
               </h2>
             )}
           </div>
@@ -63,17 +67,18 @@ export default function DashboardLayout({
             >
               <div className="flex flex-col items-end hidden lg:flex">
                 <span className="text-xs font-bold text-white leading-tight">
-                  Admin Principal
+                  RIQUITO
                 </span>
                 <span className="text-[10px] text-[#ADB2B7] font-medium leading-tight">
-                  Restaurante Central
+                  Administrador
                 </span>
               </div>
-              <div className="w-9 h-9 bg-[#1ABB9C]/10 border border-[#1ABB9C]/30 rounded-lg flex items-center justify-center text-[#1ABB9C] overflow-hidden shadow-inner relative group-hover:border-[#1ABB9C] transition-colors">
-                <span className="text-sm font-extrabold tracking-tighter">
-                  RC
-                </span>
-                <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <div className="w-9 h-9 bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm relative group-hover:border-[#1ABB9C] transition-colors">
+                <img
+                  src="/logo.png"
+                  alt="Avatar"
+                  className="w-full h-full object-cover"
+                />
               </div>
               <span
                 className={`text-[#ADB2B7] group-hover:text-white transition-all transform hidden sm:block ${isProfileOpen ? "rotate-180" : ""}`}

@@ -1,7 +1,115 @@
-import { MOCK_STUDENTS } from "@/src/data/mock";
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/src/lib/supabase";
+import Link from "next/link";
 
 export default function DashboardPage() {
-  const activeStudents = MOCK_STUDENTS.filter((s) => s.active).length;
+  const [stats, setStats] = useState({
+    activeStudents: 0,
+    consumosHoy: 0,
+    ingresosMes: 0,
+  });
+  const [recentActivity, setRecentActivity] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchDashboardData() {
+      try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const startOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          1,
+        ).toISOString();
+        const endOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth() + 1,
+          0,
+        ).toISOString();
+
+        // 1. Active Students
+        const { count: activeCount } = await supabase
+          .from("students")
+          .select("*", { count: "exact", head: true })
+          .eq("active", true);
+
+        // 2. Consumos Hoy
+        const { count: todayCount } = await supabase
+          .from("meal_logs")
+          .select("*", { count: "exact", head: true })
+          .gte("timestamp", today.toISOString());
+
+        // 3. Ingresos Mes (Pagados)
+        // Fetch paid logs
+        const { data: paidLogs } = await supabase
+          .from("meal_logs")
+          .select("price")
+          .eq("is_paid", true)
+          .gte("payment_date", startOfMonth)
+          .lte("payment_date", endOfMonth);
+
+        // Fetch paid extras
+        const { data: paidExtras } = await supabase
+          .from("student_extras")
+          .select("price")
+          .eq("is_paid", true)
+          .gte("payment_date", startOfMonth)
+          .lte("payment_date", endOfMonth);
+
+        const incomeLogs =
+          paidLogs?.reduce((sum, log) => sum + (log.price || 0), 0) || 0;
+        const incomeExtras =
+          paidExtras?.reduce((sum, extra) => sum + (extra.price || 0), 0) || 0;
+
+        // 4. Recent Activity
+        const { data: activity } = await supabase
+          .from("meal_logs")
+          .select(
+            `
+            id,
+            meal_type,
+            timestamp,
+            students (
+              first_name,
+              last_name
+            )
+          `,
+          )
+          .order("timestamp", { ascending: false })
+          .limit(5);
+
+        setStats({
+          activeStudents: activeCount || 0,
+          consumosHoy: todayCount || 0,
+          ingresosMes: incomeLogs + incomeExtras,
+        });
+
+        if (activity) {
+          setRecentActivity(
+            activity.map((log: any) => ({
+              id: log.id,
+              name: log.students
+                ? `${log.students.first_name} ${log.students.last_name}`
+                : "Desconocido",
+              service: log.meal_type,
+              time: new Date(log.timestamp).toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            })),
+          );
+        }
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchDashboardData();
+  }, []);
 
   return (
     <div className="space-y-8 animate-in fade-in slide-up">
@@ -15,36 +123,36 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex space-x-3">
-          <button className="bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm">
-            Descargar Reporte
-          </button>
-          <button className="bg-[#1ABB9C] text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-[#16a085] transition-colors shadow-sm shadow-[#1ABB9C]/20">
+          <Link
+            href="/dashboard/students"
+            className="bg-[#1ABB9C] text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-[#16a085] transition-colors shadow-sm shadow-[#1ABB9C]/20"
+          >
             + Nuevo Registro
-          </button>
+          </Link>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard
           title="Estudiantes Activos"
-          value={activeStudents}
+          value={loading ? "..." : stats.activeStudents}
           icon={<UsersIcon />}
           color="blue"
-          trend="+12% vs mes anterior"
+          trend="Registrados"
         />
         <StatCard
           title="Consumos Hoy"
-          value="42"
+          value={loading ? "..." : stats.consumosHoy}
           icon={<UtensilsIcon />}
           color="emerald"
-          trend="+5 hoy"
+          trend="Servicios"
         />
         <StatCard
           title="Ingresos Mes"
-          value="S/ 1,240"
+          value={loading ? "..." : `S/ ${stats.ingresosMes.toFixed(2)}`}
           icon={<CreditCardIcon />}
           color="amber"
-          trend="En meta (92%)"
+          trend="Cobrado"
         />
       </div>
 
@@ -55,9 +163,12 @@ export default function DashboardPage() {
             <h2 className="text-base font-bold text-slate-800">
               Últimos Consumos
             </h2>
-            <button className="text-[#1ABB9C] font-semibold text-xs hover:underline uppercase tracking-wider">
+            <Link
+              href="/dashboard/attendance"
+              className="text-[#1ABB9C] font-semibold text-xs hover:underline uppercase tracking-wider"
+            >
               Ver Historial Completo
-            </button>
+            </Link>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -75,26 +186,31 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                <ActivityRow
-                  name="Juan Pérez"
-                  service="Almuerzo"
-                  time="12:45 PM"
-                />
-                <ActivityRow
-                  name="María Garcia"
-                  service="Almuerzo"
-                  time="12:30 PM"
-                />
-                <ActivityRow
-                  name="Carlos Rodríguez"
-                  service="Desayuno"
-                  time="08:15 AM"
-                />
-                <ActivityRow
-                  name="Lucía Méndez"
-                  service="Desayuno"
-                  time="07:50 AM"
-                />
+                {loading ? (
+                  <tr>
+                    <td colSpan={3} className="px-6 py-8 text-center">
+                      <div className="inline-block w-6 h-6 border-2 border-[#1ABB9C] border-t-transparent rounded-full animate-spin"></div>
+                    </td>
+                  </tr>
+                ) : recentActivity.length > 0 ? (
+                  recentActivity.map((activity) => (
+                    <ActivityRow
+                      key={activity.id}
+                      name={activity.name}
+                      service={activity.service}
+                      time={activity.time}
+                    />
+                  ))
+                ) : (
+                  <tr>
+                    <td
+                      colSpan={3}
+                      className="px-6 py-8 text-center text-slate-400 text-sm"
+                    >
+                      No hay actividad reciente.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -112,9 +228,12 @@ export default function DashboardPage() {
               inmediata.
             </p>
             <div className="space-y-3 relative z-10">
-              <button className="w-full bg-[#1ABB9C] hover:bg-[#16a085] text-white font-bold py-2.5 rounded-lg transition-all shadow-lg shadow-[#1ABB9C]/10 text-sm">
-                Gestionar Planes
-              </button>
+              <Link
+                href="/dashboard/students"
+                className="block text-center w-full bg-[#1ABB9C] hover:bg-[#16a085] text-white font-bold py-2.5 rounded-lg transition-all shadow-lg shadow-[#1ABB9C]/10 text-sm"
+              >
+                Gestionar Estudiantes
+              </Link>
               <a
                 href="/kiosk"
                 className="flex items-center justify-center w-full bg-white/10 hover:bg-white hover:text-[#2A3F54] text-white border border-white/20 font-bold py-2.5 rounded-lg transition-all text-sm"

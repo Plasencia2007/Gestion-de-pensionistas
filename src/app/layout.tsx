@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Gestión de Pensionistas",
+  title: "RIQUITO - Gestión de Pensionistas",
   description: "Sistema inteligente para control de comedores y pensionistas.",
 };
 
