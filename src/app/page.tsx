@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/src/lib/supabase";
 
@@ -13,6 +13,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const checkSession = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session) {
+        router.push("/dashboard");
+      }
+    };
+    checkSession();
+  }, [router]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -24,7 +36,10 @@ export default function LoginPage() {
     });
 
     if (authError) {
-      setError("Credenciales inválidas. Por favor, intente de nuevo.");
+      setError(
+        authError.message ||
+          "Credenciales inválidas. Por favor, intente de nuevo.",
+      );
       setLoading(false);
     } else {
       router.push("/dashboard");

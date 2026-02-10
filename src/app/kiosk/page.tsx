@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Student } from "@/src/types";
 import { supabase } from "@/src/lib/supabase";
 
@@ -32,8 +33,24 @@ const MEAL_SCHEDULE = {
 type MealType = keyof typeof MEAL_SCHEDULE;
 
 export default function KioskPage() {
+  const router = useRouter();
+  const [authLoading, setAuthLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+
+  useEffect(() => {
+    const checkUser = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/");
+      } else {
+        setAuthLoading(false);
+      }
+    };
+    checkUser();
+  }, [router]);
   const [lastAction, setLastAction] = useState<{
     student: string;
     meal: string;
@@ -342,7 +359,12 @@ export default function KioskPage() {
     }
   };
 
-  if (!mounted) return null;
+  if (!mounted || authLoading)
+    return (
+      <div className="min-h-screen bg-[#F0F2F5] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#1ABB9C]"></div>
+      </div>
+    );
 
   return (
     <div className="min-h-screen bg-[#F0F2F5] text-slate-800 font-sans flex flex-col relative overflow-hidden">

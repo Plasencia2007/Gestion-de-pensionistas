@@ -175,11 +175,11 @@ const LogoutIcon = () => (
 );
 
 const MENU_ITEMS = [
-  { label: "Dashboard", href: "/dashboard", icon: <DashboardIcon /> },
+  { label: "Panel de Control", href: "/dashboard", icon: <DashboardIcon /> },
   { label: "Estudiantes", href: "/dashboard/students", icon: <UsersIcon /> },
   {
     label: "Asistencias",
-    href: "/dashboard/wip?feature=Asistencias",
+    href: "/dashboard/attendance",
     icon: <AttendanceIcon />,
   },
   {

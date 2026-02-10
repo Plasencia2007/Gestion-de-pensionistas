@@ -94,7 +94,7 @@ export default function DashboardPage() {
                 ? `${log.students.first_name} ${log.students.last_name}`
                 : "Desconocido",
               service: log.meal_type,
-              time: new Date(log.timestamp).toLocaleTimeString("en-US", {
+              time: new Date(log.timestamp).toLocaleTimeString("es-PE", {
                 hour: "2-digit",
                 minute: "2-digit",
               }),
