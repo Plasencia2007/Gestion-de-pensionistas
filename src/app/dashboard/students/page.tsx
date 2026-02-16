@@ -288,7 +288,7 @@ export default function StudentsPage() {
           </button>
           <button
             onClick={handleOpenAdd}
-            className="flex-1 md:flex-none bg-[#1ABB9C] text-white px-6 py-2.5 rounded-xl text-sm font-black hover:bg-[#16a085] transition-all shadow-lg shadow-[#1ABB9C]/20 flex items-center justify-center gap-2"
+            className="flex-1 md:flex-none bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2"
           >
             <PlusIcon /> Nuevo Estudiante
           </button>
