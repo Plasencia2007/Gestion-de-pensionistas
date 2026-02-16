@@ -179,56 +179,59 @@ export default function StudentHistoryPage({ params }: PageProps) {
         paymentDate: log.payment_date,
       }));
 
-      // 3. Physical Sync: Ensure all subscribed meals have a real log today (EXCEPT SATURDAYS)
+      // 3. Physical Sync: Multi-day window (Ensures Friday/Sunday backfill, skips Saturdays)
       const finalDbLogs = [...dbLogs];
-      const today = new Date();
-      const isSaturday = today.getDay() === 6;
+      const logsToInsert: any[] = [];
 
-      if (studentData && studentData.subscribed_meals && !isSaturday) {
-        today.setHours(0, 0, 0, 0);
+      for (let i = 0; i < 3; i++) {
+        const checkDate = new Date();
+        checkDate.setDate(checkDate.getDate() - i);
+        const isSaturday = checkDate.getDay() === 6;
 
-        const logsToInsert: any[] = [];
-        studentData.subscribed_meals.forEach((meal: string) => {
-          const exists = dbLogs.some((l) => {
-            const logDate = new Date(l.timestamp);
-            logDate.setHours(0, 0, 0, 0);
-            return l.mealType === meal && logDate.getTime() === today.getTime();
-          });
+        if (studentData && studentData.subscribed_meals && !isSaturday) {
+          const dateStr = checkDate.toLocaleDateString("sv");
+          const timestamp = checkDate.toISOString();
 
-          if (!exists) {
-            logsToInsert.push({
-              student_id: id,
-              meal_type: meal,
-              status: "Verificado",
-              timestamp: new Date().toISOString(),
+          studentData.subscribed_meals.forEach((meal: string) => {
+            const exists = dbLogs.some((l) => {
+              const logDate = new Date(l.timestamp).toLocaleDateString("sv");
+              return l.mealType === meal && logDate === dateStr;
             });
-          }
-        });
 
-        if (logsToInsert.length > 0) {
-          // Use ignoreDuplicates to avoid errors if race condition occurs (handled by DB unique index)
-          const { data: insertedData, error: syncError } = await supabase
-            .from("meal_logs")
-            .insert(logsToInsert)
-            .select();
-
-          if (!syncError && insertedData) {
-            insertedData.forEach((newLog) => {
-              finalDbLogs.push({
-                id: newLog.id,
-                studentId: newLog.student_id,
-                mealType: newLog.meal_type,
-                timestamp: newLog.timestamp,
-                status: newLog.status as any,
-                hasExtra: newLog.has_extra,
-                extraNotes: newLog.extra_notes,
-                isPaid: newLog.is_paid,
-                paymentDate: newLog.payment_date,
+            if (!exists) {
+              logsToInsert.push({
+                student_id: id,
+                meal_type: meal,
+                status: "Verificado",
+                timestamp: timestamp,
               });
+            }
+          });
+        }
+      }
+
+      if (logsToInsert.length > 0) {
+        const { data: insertedData, error: syncError } = await supabase
+          .from("meal_logs")
+          .insert(logsToInsert)
+          .select();
+
+        if (!syncError && insertedData) {
+          insertedData.forEach((newLog) => {
+            finalDbLogs.push({
+              id: newLog.id,
+              studentId: newLog.student_id,
+              mealType: newLog.meal_type,
+              timestamp: newLog.timestamp,
+              status: newLog.status as any,
+              hasExtra: newLog.has_extra,
+              extraNotes: newLog.extra_notes,
+              isPaid: newLog.is_paid,
+              paymentDate: newLog.payment_date,
             });
-          } else {
-            console.log("Sync skipped (likely duplicate or error):", syncError);
-          }
+          });
+        } else {
+          console.log("Sync skipped or failed:", syncError);
         }
       }
       setLogs(finalDbLogs);

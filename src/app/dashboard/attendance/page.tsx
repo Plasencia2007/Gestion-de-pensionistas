@@ -157,40 +157,55 @@ export default function AttendancePage() {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
 
+      const threeDaysAgo = new Date();
+      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+      threeDaysAgo.setHours(0, 0, 0, 0);
+
       // Fetch Logs
       const { data: logs } = await supabase
         .from("meal_logs")
-        .select("student_id, status, meal_type")
+        .select("student_id, status, meal_type, created_at")
         .in(
           "student_id",
           mapped.map((s) => s.id),
         )
-        .gte("created_at", startOfDay.toISOString());
+        .gte("created_at", threeDaysAgo.toISOString());
 
-      // AUTO-SYNC LOGIC (Skipped on Saturdays)
+      // AUTO-SYNC LOGIC (3-day window, Skip Saturdays)
       const logsToInsert: any[] = [];
       const currentLogMap: Record<string, string[]> = {};
-      const isSaturday = new Date().getDay() === 6;
 
-      if (!isSaturday) {
-        logs?.forEach((log) => {
-          if (!currentLogMap[log.student_id])
-            currentLogMap[log.student_id] = [];
-          currentLogMap[log.student_id].push(log.meal_type);
-        });
+      logs?.forEach((log) => {
+        const logDate = new Date(log.created_at).toLocaleDateString("sv");
+        const key = `${log.student_id}_${logDate}`;
+        if (!currentLogMap[key]) currentLogMap[key] = [];
+        currentLogMap[key].push(log.meal_type);
+      });
 
-        mapped.forEach((student) => {
-          student.subscribedMeals.forEach((mealLabel) => {
-            if (!currentLogMap[student.id]?.includes(mealLabel)) {
-              logsToInsert.push({
-                student_id: student.id,
-                meal_type: mealLabel,
-                status: "Verificado",
-                timestamp: new Date().toISOString(),
-              });
-            }
+      // Check last 3 days (today, yesterday, day before)
+      for (let i = 0; i < 3; i++) {
+        const checkDate = new Date();
+        checkDate.setDate(checkDate.getDate() - i);
+        const isSaturday = checkDate.getDay() === 6;
+
+        if (!isSaturday) {
+          const dateStr = checkDate.toLocaleDateString("sv");
+          const timestamp = checkDate.toISOString();
+
+          mapped.forEach((student) => {
+            student.subscribedMeals.forEach((mealLabel) => {
+              const key = `${student.id}_${dateStr}`;
+              if (!currentLogMap[key]?.includes(mealLabel)) {
+                logsToInsert.push({
+                  student_id: student.id,
+                  meal_type: mealLabel,
+                  status: "Verificado",
+                  timestamp: timestamp,
+                });
+              }
+            });
           });
-        });
+        }
       }
 
       if (logsToInsert.length > 0) {
@@ -199,11 +214,17 @@ export default function AttendancePage() {
           .insert(logsToInsert);
         if (!syncError) {
           logsToInsert.forEach((newLog) => {
-            logs?.push({
-              student_id: newLog.student_id,
-              status: newLog.status,
-              meal_type: newLog.meal_type,
-            });
+            const isToday =
+              new Date(newLog.timestamp).toLocaleDateString("sv") ===
+              new Date().toLocaleDateString("sv");
+            if (isToday) {
+              logs?.push({
+                student_id: newLog.student_id,
+                status: newLog.status,
+                meal_type: newLog.meal_type,
+                created_at: newLog.timestamp,
+              });
+            }
           });
         }
       }
